@@ -1,0 +1,11 @@
+[repository]
+name = "liquid-glass"
+authors = ["xiaoxigua-1"]
+
+[liquid-glass]
+description = "Apple-style Liquid Glass effect for Hyprland windows with refraction, chromatic aberration, and Fresnel highlights"
+authors = ["xiaoxigua-1"]
+output = "liquid-glass.so"
+build = [
+    "make all",
+]
