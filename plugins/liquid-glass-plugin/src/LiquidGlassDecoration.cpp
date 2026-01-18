@@ -82,10 +82,17 @@ void CLiquidGlassDecoration::draw(PHLMONITOR pMonitor, float const& a) {
 // ============================================================================
 
 void CLiquidGlassDecoration::sampleBackground(CFramebuffer& sourceFB, CBox box) {
+    // Validate box dimensions
+    if (box.width <= 0 || box.height <= 0)
+        return;
+        
     // Allocate framebuffer if size changed
     if (m_sampleFB.m_size.x != box.width || m_sampleFB.m_size.y != box.height) {
         m_sampleFB.alloc(box.width, box.height, sourceFB.m_drmFormat);
     }
+    
+    if (!m_sampleFB.isAllocated())
+        return;
 
     int x0 = static_cast<int>(box.x);
     int x1 = static_cast<int>(box.x + box.width);
@@ -98,6 +105,9 @@ void CLiquidGlassDecoration::sampleBackground(CFramebuffer& sourceFB, CBox box) 
     glBlitFramebuffer(x0, y0, x1, y1, 0, 0, 
                       static_cast<int>(box.width), static_cast<int>(box.height),
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    
+    // Restore framebuffer state
+    glBindFramebuffer(GL_FRAMEBUFFER, sourceFB.getFBID());
 }
 
 // ============================================================================
@@ -215,6 +225,10 @@ void CLiquidGlassDecoration::reportLuminance(const std::string& windowTitle, flo
 
 void CLiquidGlassDecoration::applyLiquidGlassEffect(CFramebuffer& sourceFB, CFramebuffer& targetFB,
                                                       CBox& rawBox, CBox& transformedBox, float windowAlpha) {
+    // Validate framebuffers
+    if (!sourceFB.isAllocated() || !targetFB.isAllocated())
+        return;
+        
     // Get config values
     static auto* const PBLUR       = (Hyprlang::FLOAT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:liquid-glass:blur_strength")->getDataStaticPtr();
     static auto* const PREFRACT    = (Hyprlang::FLOAT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:liquid-glass:refraction_strength")->getDataStaticPtr();
@@ -231,6 +245,9 @@ void CLiquidGlassDecoration::applyLiquidGlassEffect(CFramebuffer& sourceFB, CFra
     Mat3x3 matrix = g_pHyprOpenGL->m_renderData.monitorProjection.projectBox(rawBox, TR, rawBox.rot);
     Mat3x3 glMatrix = g_pHyprOpenGL->m_renderData.projection.copy().multiply(matrix);
     auto tex = sourceFB.getTexture();
+    
+    if (!tex)
+        return;
 
     glMatrix.transpose();
     
@@ -238,6 +255,10 @@ void CLiquidGlassDecoration::applyLiquidGlassEffect(CFramebuffer& sourceFB, CFra
     glBindFramebuffer(GL_FRAMEBUFFER, targetFB.getFBID());
     glActiveTexture(GL_TEXTURE0);
     tex->bind();
+    
+    // Enable blending for transparency
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
     // Use our liquid glass shader
     g_pHyprOpenGL->useProgram(g_pGlobalState->shader.program);
@@ -298,14 +319,10 @@ void CLiquidGlassDecoration::renderPass(PHLMONITOR pMonitor, const float& a) {
         ? PWORKSPACE->m_renderOffset->value() 
         : Vector2D();
     
-    // Try to use blurFB which contains the pre-rendered background for blur
-    auto* monData = g_pHyprOpenGL->m_renderData.pCurrentMonData;
-    CFramebuffer* SOURCE = g_pHyprOpenGL->m_renderData.currentFB;
-    
-    // If blur FB is available and rendered, use it (it has the background)
-    if (monData && monData->blurFB.isAllocated() && !monData->blurFBDirty) {
-        SOURCE = &monData->blurFB;
-    }
+    // Get the current framebuffer (what we're rendering to)
+    CFramebuffer* TARGET = g_pHyprOpenGL->m_renderData.currentFB;
+    if (!TARGET || !TARGET->isAllocated())
+        return;
 
     // Calculate window box
     auto thisbox = PWINDOW->getWindowMainSurfaceBox();
@@ -323,8 +340,8 @@ void CLiquidGlassDecoration::renderPass(PHLMONITOR pMonitor, const float& a) {
         g_pHyprOpenGL->m_renderData.pMonitor->m_transformedSize.x,
         g_pHyprOpenGL->m_renderData.pMonitor->m_transformedSize.y);
 
-    // Sample background and apply effect
-    sampleBackground(*SOURCE, transformBox);
+    // Sample background from current FB to our own buffer
+    sampleBackground(*TARGET, transformBox);
     
     // Calculate and report luminance for adaptive colors
     float luminance = calculateLuminance(transformBox);
@@ -332,7 +349,8 @@ void CLiquidGlassDecoration::renderPass(PHLMONITOR pMonitor, const float& a) {
         reportLuminance(PWINDOW->m_title, luminance);
     }
     
-    applyLiquidGlassEffect(m_sampleFB, *SOURCE, wlrbox, transformBox, a);
+    // Apply effect: read from our sample buffer, write to target
+    applyLiquidGlassEffect(m_sampleFB, *TARGET, wlrbox, transformBox, a);
 }
 
 // ============================================================================
