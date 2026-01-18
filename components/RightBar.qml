@@ -11,6 +11,11 @@ Item {
 
     signal powerRequested()
     signal toolbarRequested()
+    signal barHoverChanged(bool hovering)
+    signal trayMenuActiveChanged(bool active)
+    
+    // Reference to the parent window for tray menus
+    property var parentWindow: null
 
     // Auto-hide state (controlled by parent)
     property bool showBar: false
@@ -58,12 +63,13 @@ Item {
         radius: Theme.barRoundness
     }
 
+    property string activeTrayItem: "" // Track which tray icon is right-clicked
+
     Row {
         id: mainRow
         anchors.centerIn: parent
         spacing: 8
 
-        // System tray island (always visible for debug)
         Item {
             width: trayLayout.implicitWidth + 20
             height: 44
@@ -76,24 +82,44 @@ Item {
 
                 Repeater {
                     model: SystemTray.items
-
-                    MouseArea {
+                    delegate: MouseArea {
                         id: trayItem
                         required property SystemTrayItem modelData
                         property int trayItemSize: 20
+                        property string trayId: trayItem.modelData.id
 
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                         Layout.preferredWidth: trayItemSize
                         Layout.preferredHeight: trayItemSize
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        
+
                         onClicked: function(mouse) {
-                            if (mouse.button === Qt.LeftButton) {
+                             if (mouse.button === Qt.LeftButton) {
                                 modelData.activate()
                             } else if (mouse.button === Qt.RightButton) {
-                                if (modelData.menu) {
-                                    modelData.menu.open()
+                                if (modelData.hasMenu && root.parentWindow) {
+                                    root.activeTrayItem = trayId
+                                    root.trayMenuActiveChanged(true)
+                                    var iconGlobalPos = trayItem.mapToGlobal(0, 0)
+                                    var barGlobalPos = root.mapToGlobal(0, 0)
+                                    modelData.display(root.parentWindow, iconGlobalPos.x, barGlobalPos.y)
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: parent.width + 4
+                            height: parent.height + 4
+                            radius: 4
+                            color: adaptiveColors.textColor
+                            visible: root.activeTrayItem === trayId
+                            opacity:  0.1  
+                            Behavior on opacity {
+                                NumberAnimation {
+                                    duration: 150
+                                    easing.type: Easing.InOutQuad
                                 }
                             }
                         }
@@ -106,25 +132,9 @@ Item {
                             height: parent.height
                             smooth: true
                         }
-
-                        // Hover effect
-                        Rectangle {
-                            anchors.centerIn: parent
-                            width: parent.width + 4
-                            height: parent.height + 4
-                            radius: 4
-                            color: adaptiveColors.textColor
-                            opacity: parent.containsMouse ? 0.1 : 0
-                            
-                            Behavior on opacity {
-                                NumberAnimation {
-                                    duration: 150
-                                    easing.type: Easing.InOutQuad
-                                }
-                            }
-                        }
                     }
                 }
+                 
             }
         }
 
@@ -215,5 +225,10 @@ Item {
                 onClicked: root.powerRequested()
             }
         }
+    }
+    
+    // Hover detection for the entire bar
+    BarHoverDetector {
+        onHoverChanged: (hovering) => root.barHoverChanged(hovering)
     }
 }

@@ -1,3 +1,5 @@
+//@ pragma UseQApplication
+
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
@@ -65,6 +67,17 @@ ShellRoot {
         
         // The toplevel is in this workspace, check if it's activated
         return !toplevel.activated
+    }
+    
+    // Reusable function for handling bar hover changes
+    function handleBarHover(barObj, timerObj, hoverAreaObj, hovering) {
+        barObj.barIsHovered = hovering
+        if (hovering) {
+            timerObj.stop()
+            barObj.hoverActive = true
+        } else {
+            timerObj.restart()
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -152,7 +165,7 @@ ShellRoot {
         margins.bottom: 0
         margins.left: 0
 
-        implicitHeight: 100
+        implicitHeight: reveal ? 56 : 1
         implicitWidth: leftBarContent.implicitWidth + 50
 
         WlrLayershell.layer: WlrLayer.Top
@@ -163,6 +176,7 @@ ShellRoot {
         
         // Hover state with delay (Ambxst pattern)
         property bool hoverActive: false
+        property bool barIsHovered: false
         
         // Reveal logic - use shared function
         readonly property bool reveal: root.shouldRevealBar(hoverActive)
@@ -173,7 +187,7 @@ ShellRoot {
             interval: 1000
             repeat: false
             onTriggered: {
-                if (!leftHoverArea.containsMouse) {
+                if (!leftHoverArea.containsMouse && !leftBar.barIsHovered) {
                     leftBar.hoverActive = false
                 }
             }
@@ -193,7 +207,7 @@ ShellRoot {
             anchors.leftMargin: 0
             anchors.bottomMargin: 0  // Stay at absolute bottom
             width: leftBarContent.implicitWidth + 24  // Fixed to content size + padding
-            height: 100  // Fixed height for trigger zone
+            height: 1  // Trigger only on edge hit
             
             onContainsMouseChanged: {
                 if (containsMouse) {
@@ -215,6 +229,7 @@ ShellRoot {
             showBar: leftBar.reveal
             onLauncherRequested: notchContent.openView("launcher")
             onOverviewRequested: State.toggleOverview()
+            onBarHoverChanged: (hovering) => root.handleBarHover(leftBar, leftHideTimer, leftHoverArea, hovering)
         }
     }
 
@@ -232,7 +247,7 @@ ShellRoot {
         margins.bottom: 0
         margins.right: 0
 
-        implicitHeight: 100
+        implicitHeight: reveal ? 56 : 1
         implicitWidth: rightBarContent.implicitWidth + 50
 
         WlrLayershell.layer: WlrLayer.Top
@@ -243,6 +258,8 @@ ShellRoot {
         
         // Hover state with delay (Ambxst pattern)
         property bool hoverActive: false
+        property bool barIsHovered: false
+        property bool trayMenuActive: false
         
         // Reveal logic - use shared function
         readonly property bool reveal: root.shouldRevealBar(hoverActive)
@@ -253,15 +270,10 @@ ShellRoot {
             interval: 1000
             repeat: false
             onTriggered: {
-                if (!rightHoverArea.containsMouse) {
+                if (!rightHoverArea.containsMouse && !rightBar.barIsHovered && !rightBar.trayMenuActive) {
                     rightBar.hoverActive = false
                 }
             }
-        }
-
-        // Mask to the hover area for proper input
-        mask: Region {
-            item: rightHoverArea
         }
 
         // Hover detection zone - FIXED SIZE to prevent flickering
@@ -278,7 +290,7 @@ ShellRoot {
             anchors.rightMargin: 0
             anchors.bottomMargin: 0  // Stay at absolute bottom
             width: rightBarContent.implicitWidth + 24  // Fixed to content size + padding
-            height: 100  // Fixed height for trigger zone
+            height: 1  // Trigger only on edge hit
             
             onContainsMouseChanged: {
                 if (containsMouse) {
@@ -297,9 +309,20 @@ ShellRoot {
             anchors.bottom: parent.bottom
             anchors.rightMargin: 6
             anchors.bottomMargin: 6
+            parentWindow: rightBar
             showBar: rightBar.reveal
             onPowerRequested: notchContent.openView("power")
             onToolbarRequested: notchContent.openView("toolbar")
+            onBarHoverChanged: (hovering) => root.handleBarHover(rightBar, rightHideTimer, rightHoverArea, hovering)
+            onTrayMenuActiveChanged: (active) => {
+                rightBar.trayMenuActive = active
+                if (active) {
+                    rightHideTimer.stop()
+                    rightBar.hoverActive = true
+                } else {
+                    rightHideTimer.restart()
+                }
+            }
         }
     }
 

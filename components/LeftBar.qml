@@ -10,6 +10,7 @@ Item {
 
     signal launcherRequested()
     signal overviewRequested()
+    signal barHoverChanged(bool hovering)
 
     // Auto-hide state (controlled by parent)
     property bool showBar: false
@@ -122,5 +123,10 @@ Item {
             id: workspacesWidget
             textColor: adaptiveColors.iconColor
         }
+    }
+    
+    // Hover detection for the entire bar
+    BarHoverDetector {
+        onHoverChanged: (hovering) => root.barHoverChanged(hovering)
     }
 }
