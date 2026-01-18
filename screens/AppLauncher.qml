@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
 import ".."
+import "../services/AppSearch.qml" 
 
 Item {
     id: root
