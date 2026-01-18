@@ -240,6 +240,11 @@ ShellRoot {
     PanelWindow {
         id: statusBar
         visible: !State.isFullscreen
+        
+        // Hover state with delay (Ambxst pattern)
+        property bool hoverActive: false
+        property bool barIsHovered: false
+        property bool trayMenuActive: false
 
         anchors {
             bottom: true
@@ -256,11 +261,6 @@ ShellRoot {
         exclusionMode: ExclusionMode.Ignore
 
         color: "transparent"
-        
-        // Hover state with delay (Ambxst pattern)
-        property bool hoverActive: false
-        property bool barIsHovered: false
-        property bool trayMenuActive: false
         
         // Reveal logic - use shared function
         readonly property bool reveal: root.shouldRevealBar(hoverActive)

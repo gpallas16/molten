@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Quickshell
 import Quickshell.Services.SystemTray
 import Quickshell.Widgets
 import "../../globals"
@@ -66,6 +67,27 @@ Item {
     }
 
     property string activeTrayItem: "" // Track which tray icon is right-clicked
+    
+    // Function to clear tray menu state (called from parent when clicking outside)
+    function clearTrayMenu() {
+        activeTrayItem = ""
+    }
+    
+    // Menu anchor for system tray context menus - tracks menu open/close state
+    QsMenuAnchor {
+        id: trayMenuAnchor
+        
+        anchor.window: root.parentWindow
+        // Position menu above the bar (anchor at top edge, menu grows upward)
+        anchor.edges: Edges.Top
+        anchor.gravity: Edges.Top
+        
+        onClosed: {
+            // Menu closed - re-enable auto-hide
+            root.activeTrayItem = ""
+            root.trayMenuActiveChanged(false)
+        }
+    }
 
     Row {
         id: mainRow
@@ -103,9 +125,12 @@ Item {
                                 if (modelData.hasMenu && root.parentWindow) {
                                     root.activeTrayItem = trayId
                                     root.trayMenuActiveChanged(true)
-                                    var iconGlobalPos = trayItem.mapToGlobal(0, 0)
-                                    var barGlobalPos = root.mapToGlobal(0, 0)
-                                    modelData.display(root.parentWindow, iconGlobalPos.x, barGlobalPos.y)
+                                    // Use QsMenuAnchor to open the menu - this tracks when it closes
+                                    trayMenuAnchor.menu = modelData.menu
+                                    // Set the anchor position relative to the parent window
+                                    var iconPos = trayItem.mapToItem(null, trayItem.width / 2, 0)
+                                    trayMenuAnchor.anchor.rect = Qt.rect(iconPos.x, iconPos.y, 1, 1)
+                                    trayMenuAnchor.open()
                                 }
                             }
                         }
