@@ -72,9 +72,10 @@ molten/
 - [ ] Implement StatusNotifierItem for system tray
 - [ ] Add weather API integration
 - [ ] Calendar provider integration
-- [ ] Liquid glass blur effect
+- [-] Liquid glass blur effect
 - [ ] Drag-and-drop for favorites reordering
 - [ ] Folder management UI
+- [-] Window buttons for active window
 
 ## License
 

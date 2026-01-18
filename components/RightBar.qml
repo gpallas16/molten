@@ -1,5 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
+import Quickshell.Services.SystemTray
+import Quickshell.Widgets
 import ".."
 
 Item {
@@ -61,13 +63,78 @@ Item {
         anchors.centerIn: parent
         spacing: 8
 
-        // System tray island
+        // System tray island (always visible for debug)
         Item {
             width: trayLayout.implicitWidth + 20
             height: 44
+            // visible: SystemTray.items.length > 0
 
             RowLayout {
                 id: trayLayout
+                anchors.centerIn: parent
+                spacing: 6
+
+                Repeater {
+                    model: SystemTray.items
+
+                    MouseArea {
+                        id: trayItem
+                        required property SystemTrayItem modelData
+                        property int trayItemSize: 20
+
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        Layout.preferredWidth: trayItemSize
+                        Layout.preferredHeight: trayItemSize
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        
+                        onClicked: function(mouse) {
+                            if (mouse.button === Qt.LeftButton) {
+                                modelData.activate()
+                            } else if (mouse.button === Qt.RightButton) {
+                                if (modelData.menu) {
+                                    modelData.menu.open()
+                                }
+                            }
+                        }
+
+                        IconImage {
+                            id: trayIcon
+                            source: trayItem.modelData.icon
+                            anchors.centerIn: parent
+                            width: parent.width
+                            height: parent.height
+                            smooth: true
+                        }
+
+                        // Hover effect
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: parent.width + 4
+                            height: parent.height + 4
+                            radius: 4
+                            color: adaptiveColors.textColor
+                            opacity: parent.containsMouse ? 0.1 : 0
+                            
+                            Behavior on opacity {
+                                NumberAnimation {
+                                    duration: 150
+                                    easing.type: Easing.InOutQuad
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Quick status island
+        Item {
+            width: statusLayout.implicitWidth + 20
+            height: 44
+
+            RowLayout {
+                id: statusLayout
                 anchors.centerIn: parent
                 spacing: 6
 
@@ -125,24 +192,7 @@ Item {
         }
 
         // Theme toggle island
-        Item {
-            width: 44
-            height: 44
-
-            Text {
-                anchors.centerIn: parent
-                text: Theme.mode === "dark" ? "☀" : "🌙"
-                font.pixelSize: 16
-            }
-
-            MouseArea {
-                id: themeMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: Theme.toggle()
-            }
-        }
+        // (Theme toggle removed)
 
         // Power island
         Item {

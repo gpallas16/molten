@@ -178,27 +178,20 @@ ShellRoot {
                 }
             }
         }
-        
-        // Watch for mouse state changes (Ambxst pattern)
-        onHoverActiveChanged: {
-            console.log("LeftBar hoverActive changed to:", hoverActive)
-        }
-
-        // Mask to the hover area for proper input
-        mask: Region {
-            item: leftHoverArea
-        }
 
         // Hover detection zone - FIXED SIZE to prevent flickering
         MouseArea {
             id: leftHoverArea
+            z: 100  // Ensure it's above the bar content
             hoverEnabled: true
             propagateComposedEvents: true
             onPressed: (mouse) => mouse.accepted = false
             
-            // Position at bottom-left - FIXED size, doesn't change with reveal
+            // Position at bottom-left - ABSOLUTE position at screen bottom
             anchors.left: parent.left
             anchors.bottom: parent.bottom
+            anchors.leftMargin: 0
+            anchors.bottomMargin: 0  // Stay at absolute bottom
             width: leftBarContent.implicitWidth + 24  // Fixed to content size + padding
             height: 100  // Fixed height for trigger zone
             
@@ -214,6 +207,7 @@ ShellRoot {
 
         LeftBar {
             id: leftBarContent
+            z: 1  // Below the MouseArea
             anchors.left: parent.left
             anchors.bottom: parent.bottom
             anchors.leftMargin: 6
@@ -273,13 +267,16 @@ ShellRoot {
         // Hover detection zone - FIXED SIZE to prevent flickering
         MouseArea {
             id: rightHoverArea
+            z: 100  // Ensure it's above the bar content
             hoverEnabled: true
             propagateComposedEvents: true
             onPressed: (mouse) => mouse.accepted = false
             
-            // Position at bottom-right - FIXED size, doesn't change with reveal
+            // Position at bottom-right - ABSOLUTE position at screen bottom
             anchors.right: parent.right
             anchors.bottom: parent.bottom
+            anchors.rightMargin: 0
+            anchors.bottomMargin: 0  // Stay at absolute bottom
             width: rightBarContent.implicitWidth + 24  // Fixed to content size + padding
             height: 100  // Fixed height for trigger zone
             
@@ -295,6 +292,7 @@ ShellRoot {
 
         RightBar {
             id: rightBarContent
+            z: 1  // Below the MouseArea
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.rightMargin: 6
