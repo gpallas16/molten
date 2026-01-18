@@ -6,7 +6,8 @@ import Quickshell.Hyprland
 import QtQuick
 import QtQuick.Layouts
 import "components"
-import "." as Root
+import "globals" as Root
+import "globals"
 
 ShellRoot {
     id: root

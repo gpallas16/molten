@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import "../.."
+import "../../globals"
 import "../effects"
 import "../behavior"
 import "../widgets"

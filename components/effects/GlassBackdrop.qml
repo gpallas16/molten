@@ -1,7 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Hyprland
-import "../.."
+import "../../globals"
 
 // Reusable glass backdrop window for liquid glass effect
 FloatingWindow {

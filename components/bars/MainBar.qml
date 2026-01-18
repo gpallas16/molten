@@ -1,8 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import "../.." as Root
-import "../.."
+import "../../globals" as Root
+import "../../globals"
 import "../effects"
 
 // Exact Ambxst animation structure

@@ -1,8 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import Quickshell.Hyprland
-import "../.." as Root
-import "../.."
+import "../../globals" as Root
+import "../../globals"
 
 // ═══════════════════════════════════════════════════════════════════
 // Workspaces Widget - Ambxst Style

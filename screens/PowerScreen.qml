@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import "../components"
-import ".."
+import "../globals"
 
 Item {
     id: root

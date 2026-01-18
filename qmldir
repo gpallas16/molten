@@ -1,2 +1,2 @@
-singleton State 1.0 State.qml
-singleton Theme 1.0 Theme.qml
+singleton State 1.0 globals/State.qml
+singleton Theme 1.0 globals/Theme.qml
