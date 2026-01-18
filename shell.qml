@@ -4,6 +4,7 @@ import Quickshell.Hyprland
 import QtQuick
 import QtQuick.Layouts
 import "components"
+import "." as Root
 
 ShellRoot {
     id: root
@@ -19,6 +20,51 @@ ShellRoot {
     property int screenHeight: {
         var monitor = Hyprland.monitors.values[0]
         return monitor ? monitor.height : 1080
+    }
+    
+    // Shared reveal logic for both bars
+    function shouldRevealBar(hoverActive) {
+        // Check if hovering first
+        if (hoverActive) return true
+        
+        // Check if current workspace has any windows
+        var currentWs = Root.State.activeWorkspace
+        var wsData = Hyprland.workspaces.values.find(function(ws) { return ws.id === currentWs })
+        
+        // Check if toplevels has any items
+        var hasToplevels = false
+        if (wsData && wsData.toplevels && wsData.toplevels.values && wsData.toplevels.values.length > 0) {
+            hasToplevels = true
+        }
+        
+        // If workspace is empty, always show
+        if (!wsData || !hasToplevels) return true
+        
+        // Otherwise, check if there's a focused window IN THIS WORKSPACE
+        var toplevel = ToplevelManager.activeToplevel
+        if (!toplevel) return true  // No toplevel, show bars
+        
+        // Check if the active toplevel is in the current workspace
+        var toplevelAddress = toplevel.HyprlandToplevel ? toplevel.HyprlandToplevel.address : null
+        
+        if (toplevelAddress) {
+            // Find the window in this workspace's toplevels
+            var isInCurrentWorkspace = false
+            if (wsData.toplevels && wsData.toplevels.values) {
+                for (var i = 0; i < wsData.toplevels.values.length; i++) {
+                    if (wsData.toplevels.values[i].address === toplevelAddress) {
+                        isInCurrentWorkspace = true
+                        break
+                    }
+                }
+            }
+            
+            // If the active toplevel is NOT in this workspace, show the bars
+            if (!isInCurrentWorkspace) return true
+        }
+        
+        // The toplevel is in this workspace, check if it's activated
+        return !toplevel.activated
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -114,16 +160,56 @@ ShellRoot {
         exclusionMode: ExclusionMode.Ignore
 
         color: "transparent"
+        
+        // Hover state with delay (Ambxst pattern)
+        property bool hoverActive: false
+        
+        // Reveal logic - use shared function
+        readonly property bool reveal: root.shouldRevealBar(hoverActive)
+        
+        // Timer to delay hiding after mouse leaves
+        Timer {
+            id: leftHideTimer
+            interval: 1000
+            repeat: false
+            onTriggered: {
+                if (!leftHoverArea.containsMouse) {
+                    leftBar.hoverActive = false
+                }
+            }
+        }
+        
+        // Watch for mouse state changes (Ambxst pattern)
+        onHoverActiveChanged: {
+            console.log("LeftBar hoverActive changed to:", hoverActive)
+        }
 
-        property bool hovered: leftHoverArea.containsMouse
+        // Mask to the hover area for proper input
+        mask: Region {
+            item: leftHoverArea
+        }
 
-        // Extended hover detection zone
+        // Hover detection zone - FIXED SIZE to prevent flickering
         MouseArea {
             id: leftHoverArea
-            anchors.fill: parent
             hoverEnabled: true
             propagateComposedEvents: true
             onPressed: (mouse) => mouse.accepted = false
+            
+            // Position at bottom-left - FIXED size, doesn't change with reveal
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            width: leftBarContent.implicitWidth + 24  // Fixed to content size + padding
+            height: 100  // Fixed height for trigger zone
+            
+            onContainsMouseChanged: {
+                if (containsMouse) {
+                    leftHideTimer.stop()
+                    leftBar.hoverActive = true
+                } else {
+                    leftHideTimer.restart()
+                }
+            }
         }
 
         LeftBar {
@@ -132,7 +218,7 @@ ShellRoot {
             anchors.bottom: parent.bottom
             anchors.leftMargin: 6
             anchors.bottomMargin: 6
-            showBar: !State.hasActiveWindows || leftBar.hovered
+            showBar: leftBar.reveal
             onLauncherRequested: notchContent.openView("launcher")
             onOverviewRequested: State.toggleOverview()
         }
@@ -160,16 +246,51 @@ ShellRoot {
         exclusionMode: ExclusionMode.Ignore
 
         color: "transparent"
+        
+        // Hover state with delay (Ambxst pattern)
+        property bool hoverActive: false
+        
+        // Reveal logic - use shared function
+        readonly property bool reveal: root.shouldRevealBar(hoverActive)
+        
+        // Timer to delay hiding after mouse leaves
+        Timer {
+            id: rightHideTimer
+            interval: 1000
+            repeat: false
+            onTriggered: {
+                if (!rightHoverArea.containsMouse) {
+                    rightBar.hoverActive = false
+                }
+            }
+        }
 
-        property bool hovered: rightHoverArea.containsMouse
+        // Mask to the hover area for proper input
+        mask: Region {
+            item: rightHoverArea
+        }
 
-        // Extended hover detection zone
+        // Hover detection zone - FIXED SIZE to prevent flickering
         MouseArea {
             id: rightHoverArea
-            anchors.fill: parent
             hoverEnabled: true
             propagateComposedEvents: true
             onPressed: (mouse) => mouse.accepted = false
+            
+            // Position at bottom-right - FIXED size, doesn't change with reveal
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            width: rightBarContent.implicitWidth + 24  // Fixed to content size + padding
+            height: 100  // Fixed height for trigger zone
+            
+            onContainsMouseChanged: {
+                if (containsMouse) {
+                    rightHideTimer.stop()
+                    rightBar.hoverActive = true
+                } else {
+                    rightHideTimer.restart()
+                }
+            }
         }
 
         RightBar {
@@ -178,7 +299,7 @@ ShellRoot {
             anchors.bottom: parent.bottom
             anchors.rightMargin: 6
             anchors.bottomMargin: 6
-            showBar: !State.hasActiveWindows || rightBar.hovered
+            showBar: rightBar.reveal
             onPowerRequested: notchContent.openView("power")
             onToolbarRequested: notchContent.openView("toolbar")
         }
@@ -222,7 +343,9 @@ ShellRoot {
         screenWidth: root.screenWidth
         screenHeight: root.screenHeight
         horizontalAlign: "left"
-        backdropVisible: leftBarContent.opacity > 0
+        // Always visible - yOffset handles positioning off-screen when hidden
+        backdropVisible: true
+        yOffset: leftBarContent.yPosition  // Sync with slide animation
         startupDelay: 50
     }
 
@@ -234,7 +357,9 @@ ShellRoot {
         screenWidth: root.screenWidth
         screenHeight: root.screenHeight
         horizontalAlign: "right"
-        backdropVisible: rightBarContent.opacity > 0
+        // Always visible - yOffset handles positioning off-screen when hidden
+        backdropVisible: true
+        yOffset: rightBarContent.yPosition  // Sync with slide animation
         startupDelay: 100
     }
 

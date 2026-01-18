@@ -19,6 +19,9 @@ FloatingWindow {
     property int margin: 6
     property int startupDelay: 50
     
+    // Y offset for animation (e.g., slide up/down)
+    property real yOffset: 0
+    
     // Visibility control
     property bool backdropVisible: true
     
@@ -79,8 +82,8 @@ FloatingWindow {
                 x = margin
         }
         
-        // Y is always from bottom
-        y = screenHeight - h - margin
+        // Y is always from bottom + yOffset for animation
+        y = screenHeight - h - margin + Math.round(yOffset)
         
         // Validate Y position
         if (y < 0) return

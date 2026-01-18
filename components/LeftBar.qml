@@ -13,7 +13,32 @@ Item {
 
     // Auto-hide state (controlled by parent)
     property bool showBar: false
+    
+    // Y position for glass backdrop sync - use binding to always match transform
+    property real yPosition: slideTransform.y
+    
+    // Slide animation: translate Y when hiding
+    transform: Translate {
+        id: slideTransform
+        y: showBar ? 0 : (root.height + 20)
+        
+        Behavior on y {
+            NumberAnimation {
+                duration: 400
+                easing.type: showBar ? Easing.OutBack : Easing.InQuad
+                easing.overshoot: 1.2
+            }
+        }
+    }
+    
     opacity: showBar ? 1.0 : 0.0
+    
+    Behavior on opacity {
+        NumberAnimation {
+            duration: showBar ? 300 : 200
+            easing.type: Easing.InOutQuad
+        }
+    }
     
     // Adaptive colors based on background
     AdaptiveColors {

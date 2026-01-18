@@ -66,11 +66,11 @@ Singleton {
         return ranges
     }
 
-    // Window state from Hyprland
+    // Window state - true when there's an active (focused) window
+    // Using the same approach as Ambxst: check ToplevelManager.activeToplevel.activated
     readonly property bool hasActiveWindows: {
-        var focusedWs = monitor?.activeWorkspace
-        if (!focusedWs) return false
-        return focusedWs.windows > 0
+        var toplevel = ToplevelManager.activeToplevel
+        return toplevel ? toplevel.activated : false
     }
 
     // Fullscreen detection from active toplevel
