@@ -110,7 +110,7 @@ ShellRoot {
         property bool hoverActive: false
         property bool barIsHovered: false
         
-        // Discrete mode logic - mirrors the reveal logic (inverse)
+        // Discrete mode reveal logic - similar to workspace/status bars
         readonly property bool shouldBeDiscrete: {
             // If hovering, don't be discrete
             if (hoverActive) return false
@@ -118,12 +118,44 @@ ShellRoot {
             // If main bar is expanded, don't be discrete
             if (mainBarContent.isExpanded) return false
             
-            // Use inverse of shouldRevealBar logic
-            // If bars should be revealed (no active windows), then don't be discrete
-            if (root.shouldRevealBar(false)) return false
+            // Check if current workspace has any windows
+            var currentWs = Root.State.activeWorkspace
+            var wsData = Hyprland.workspaces.values.find(function(ws) { return ws.id === currentWs })
             
-            // Otherwise, enter discrete mode
-            return true
+            // Check if toplevels has any items
+            var hasToplevels = false
+            if (wsData && wsData.toplevels && wsData.toplevels.values && wsData.toplevels.values.length > 0) {
+                hasToplevels = true
+            }
+            
+            // If workspace is empty, don't be discrete
+            if (!wsData || !hasToplevels) return false
+            
+            // Otherwise, check if there's a focused window IN THIS WORKSPACE
+            var toplevel = ToplevelManager.activeToplevel
+            if (!toplevel) return false  // No toplevel, don't be discrete
+            
+            // Check if the active toplevel is in the current workspace
+            var toplevelAddress = toplevel.HyprlandToplevel ? toplevel.HyprlandToplevel.address : null
+            
+            if (toplevelAddress) {
+                // Find the window in this workspace's toplevels
+                var isInCurrentWorkspace = false
+                if (wsData.toplevels && wsData.toplevels.values) {
+                    for (var i = 0; i < wsData.toplevels.values.length; i++) {
+                        if (wsData.toplevels.values[i].address === toplevelAddress) {
+                            isInCurrentWorkspace = true
+                            break
+                        }
+                    }
+                }
+                
+                // If the active toplevel is NOT in this workspace, don't be discrete
+                if (!isInCurrentWorkspace) return false
+            }
+            
+            // The toplevel is in this workspace and activated, be discrete
+            return toplevel.activated
         }
         
         // Timer to delay entering discrete mode after mouse leaves
@@ -276,27 +308,6 @@ ShellRoot {
         // Reveal logic - use shared function
         readonly property bool reveal: root.shouldRevealBar(hoverActive)
         
-        // Workspace change detection - reveal bar temporarily on workspace switch
-        Connections {
-            target: Root.State
-            function onActiveWorkspaceChanged() {
-                workspaceBar.hoverActive = true
-                workspaceHideTimer.restart()
-            }
-        }
-        
-        // Timer to delay revealing when mouse enters edge (0.5s persistence)
-        Timer {
-            id: workspaceRevealTimer
-            interval: 500
-            repeat: false
-            onTriggered: {
-                if (workspaceHoverArea.containsMouse) {
-                    workspaceBar.hoverActive = true
-                }
-            }
-        }
-        
         // Timer to delay hiding after mouse leaves
         Timer {
             id: workspaceHideTimer
@@ -328,9 +339,8 @@ ShellRoot {
             onContainsMouseChanged: {
                 if (containsMouse) {
                     workspaceHideTimer.stop()
-                    workspaceRevealTimer.restart()
+                    workspaceBar.hoverActive = true
                 } else {
-                    workspaceRevealTimer.stop()
                     workspaceHideTimer.restart()
                 }
             }
@@ -381,18 +391,6 @@ ShellRoot {
         // Reveal logic - use shared function
         readonly property bool reveal: root.shouldRevealBar(hoverActive)
         
-        // Timer to delay revealing when mouse enters edge (0.5s persistence)
-        Timer {
-            id: statusRevealTimer
-            interval: 500
-            repeat: false
-            onTriggered: {
-                if (statusHoverArea.containsMouse) {
-                    statusBar.hoverActive = true
-                }
-            }
-        }
-        
         // Timer to delay hiding after mouse leaves
         Timer {
             id: statusHideTimer
@@ -424,9 +422,8 @@ ShellRoot {
             onContainsMouseChanged: {
                 if (containsMouse) {
                     statusHideTimer.stop()
-                    statusRevealTimer.restart()
+                    statusBar.hoverActive = true
                 } else {
-                    statusRevealTimer.stop()
                     statusHideTimer.restart()
                 }
             }
