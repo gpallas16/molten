@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Hyprland
 import "../../globals"
+import "../effects"
 
 // Reusable glass backdrop window for liquid glass effect
 FloatingWindow {
@@ -97,8 +98,22 @@ FloatingWindow {
         }
     }
     
+    // Adaptive colors to determine background darkness
+    AdaptiveColors {
+        id: adaptiveColors
+        region: root.backdropName
+    }
+    
     Rectangle {
         anchors.fill: parent
-        color: "transparent"
+        // Subtle tint: black when text is white (dark bg), white when text is dark (light bg)
+        color: adaptiveColors.backgroundIsDark ? 
+               Qt.rgba(0, 0, 0, 0.15) : 
+               Qt.rgba(1, 1, 1, 0.15)
+        radius: 12
+        
+        Behavior on color {
+            ColorAnimation { duration: 200 }
+        }
     }
 }

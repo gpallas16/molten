@@ -12,6 +12,11 @@ Item {
     // Output: whether the background is dark (content should be light)
     property bool backgroundIsDark: true
     
+    // Internal: debouncing state changes
+    property bool pendingDarkState: true
+    property int stableStateCount: 0
+    readonly property int requiredStableFrames: 3  // Require 3 consistent readings
+    
     // Output: adaptive colors based on background
     property color textColor: backgroundIsDark ? "#ffffff" : "#000000"
     property color textColorSecondary: backgroundIsDark ? Qt.rgba(1, 1, 1, 0.6) : Qt.rgba(0, 0, 0, 0.6)
@@ -19,10 +24,10 @@ Item {
     property color subtleTextColor: backgroundIsDark ? Qt.rgba(1, 1, 1, 0.7) : Qt.rgba(0, 0, 0, 0.7)
     
     // Smooth transition when colors change
-    Behavior on textColor { ColorAnimation { duration: 150 } }
-    Behavior on textColorSecondary { ColorAnimation { duration: 150 } }
-    Behavior on iconColor { ColorAnimation { duration: 150 } }
-    Behavior on subtleTextColor { ColorAnimation { duration: 150 } }
+    Behavior on textColor { ColorAnimation { duration: 200 } }
+    Behavior on textColorSecondary { ColorAnimation { duration: 200 } }
+    Behavior on iconColor { ColorAnimation { duration: 200 } }
+    Behavior on subtleTextColor { ColorAnimation { duration: 200 } }
     
     // File watcher for adaptive color data (written by liquid glass plugin)
     FileView {
@@ -36,7 +41,20 @@ Item {
             try {
                 var data = JSON.parse(text())
                 if (data[root.region]) {
-                    root.backgroundIsDark = data[root.region].isDark
+                    var isDark = data[root.region].isDark
+                    
+                    // Debounce: only change if state is stable for multiple readings
+                    if (isDark === root.pendingDarkState) {
+                        root.stableStateCount++
+                        if (root.stableStateCount >= root.requiredStableFrames && 
+                            root.backgroundIsDark !== isDark) {
+                            root.backgroundIsDark = isDark
+                        }
+                    } else {
+                        // State changed, reset counter
+                        root.pendingDarkState = isDark
+                        root.stableStateCount = 0
+                    }
                 }
             } catch (e) {
                 // File not ready or parse error
@@ -46,7 +64,7 @@ Item {
     
     // Also poll periodically as backup
     Timer {
-        interval: 1000
+        interval: 100
         running: true
         repeat: true
         onTriggered: colorDataFile.reload()

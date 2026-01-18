@@ -116,6 +116,7 @@ void CLiquidGlassDecoration::sampleBackground(CFramebuffer& sourceFB, CBox box) 
 
 // Global luminance data storage
 static std::unordered_map<std::string, float> g_luminanceData;
+static std::unordered_map<std::string, bool> g_isDarkState;  // Track isDark state per region
 static int g_luminanceWriteCounter = 0;
 
 float CLiquidGlassDecoration::calculateLuminance(CBox& box) {
@@ -185,7 +186,7 @@ void CLiquidGlassDecoration::reportLuminance(const std::string& windowTitle, flo
     
     // Write to file periodically (not every frame)
     g_luminanceWriteCounter++;
-    if (g_luminanceWriteCounter < 5) {
+    if (g_luminanceWriteCounter < 15) {
         return;
     }
     g_luminanceWriteCounter = 0;
@@ -197,7 +198,29 @@ void CLiquidGlassDecoration::reportLuminance(const std::string& windowTitle, flo
         if (!first) json += ",";
         first = false;
         
-        bool isDark = lum < 0.5f;
+        // Hysteresis thresholds to prevent rapid toggling on gray backgrounds
+        const float DARK_THRESHOLD = 0.45f;   // Switch to dark mode below this
+        const float LIGHT_THRESHOLD = 0.55f;  // Switch to light mode above this
+        
+        // Get current state (default to true if not yet set)
+        bool currentIsDark = g_isDarkState.count(name) ? g_isDarkState[name] : true;
+        
+        // Apply hysteresis
+        bool isDark;
+        if (currentIsDark && lum > LIGHT_THRESHOLD) {
+            // Currently dark, switch to light only if above upper threshold
+            isDark = false;
+        } else if (!currentIsDark && lum < DARK_THRESHOLD) {
+            // Currently light, switch to dark only if below lower threshold
+            isDark = true;
+        } else {
+            // Stay in current state (hysteresis zone)
+            isDark = currentIsDark;
+        }
+        
+        // Update state
+        g_isDarkState[name] = isDark;
+        
         json += "\"" + name + "\":{";
         json += "\"luminance\":" + std::to_string(lum) + ",";
         json += "\"isDark\":" + std::string(isDark ? "true" : "false") + ",";
