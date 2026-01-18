@@ -11,7 +11,7 @@ import "." as Root
 ShellRoot {
     id: root
 
-    // Current screen state (synced with notch)
+    // Current screen state (synced with main bar)
     property string currentScreen: "none"
     
     // Screen dimensions - get from Hyprland monitor
@@ -81,13 +81,13 @@ ShellRoot {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // NOTCH - Dynamic Island (Ambxst-style: full screen window, notch floats)
+    // MAIN BAR - Dynamic Island (Ambxst-style: full screen window, main bar floats)
     // ═══════════════════════════════════════════════════════════════
     PanelWindow {
-        id: notchWindow
+        id: mainBarWindow
         visible: !State.isFullscreen
 
-        // AMBXST: Full screen window, notch floats inside
+        // AMBXST: Full screen window, main bar floats inside
         anchors {
             top: true
             bottom: true
@@ -99,12 +99,12 @@ ShellRoot {
 
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "molten-notch"
-        WlrLayershell.keyboardFocus: notchContent.isExpanded ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+        WlrLayershell.keyboardFocus: mainBarContent.isExpanded ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         exclusionMode: ExclusionMode.Ignore
 
-        // Mask: full window when expanded (to catch outside clicks), just notch when collapsed
+        // Mask: full window when expanded (to catch outside clicks), just main bar when collapsed
         mask: Region {
-            item: notchContent.isExpanded ? fullWindowMask : notchRegionContainer
+            item: mainBarContent.isExpanded ? fullWindowMask : mainBarRegionContainer
         }
 
         // Full window mask for catching outside clicks when expanded
@@ -113,25 +113,25 @@ ShellRoot {
             anchors.fill: parent
         }
 
-        // Click outside expanded notch to close (full window area)
+        // Click outside expanded main bar to close (full window area)
         MouseArea {
             anchors.fill: parent
             z: -1
-            visible: notchContent.isExpanded
-            onClicked: notchContent.closeView()
+            visible: mainBarContent.isExpanded
+            onClicked: mainBarContent.closeView()
         }
 
-        // Container for the notch region (for masking when collapsed)
+        // Container for the main bar region (for masking when collapsed)
         Item {
-            id: notchRegionContainer
+            id: mainBarRegionContainer
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 6
-            width: notchContent.implicitWidth
-            height: notchContent.implicitHeight
+            width: mainBarContent.implicitWidth
+            height: mainBarContent.implicitHeight
 
-            Notch {
-                id: notchContent
+            MainBar {
+                id: mainBarContent
                 anchors.centerIn: parent
 
                 onCurrentViewChanged: {
@@ -139,7 +139,7 @@ ShellRoot {
                 }
 
                 onIsExpandedChanged: {
-                    // Update glass backdrop rounding dynamically when notch expands/collapses
+                    // Update glass backdrop rounding dynamically when main bar expands/collapses
                     var radius = isExpanded ? Theme.containerRoundness : Theme.barRoundness
                     Hyprland.dispatch("exec hyprctl setprop title:^molten-glass-notch$ rounding " + radius)
                 }
@@ -152,10 +152,10 @@ ShellRoot {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // LEFT BAR - Launcher, Overview, Workspaces
+    // WORKSPACE BAR - Launcher, Overview, Workspaces
     // ═══════════════════════════════════════════════════════════════
     PanelWindow {
-        id: leftBar
+        id: workspaceBar
         visible: !State.isFullscreen
 
         anchors {
@@ -166,7 +166,7 @@ ShellRoot {
         margins.left: 0
 
         implicitHeight: reveal ? 56 : 1
-        implicitWidth: leftBarContent.implicitWidth + 50
+        implicitWidth: workspaceBarContent.implicitWidth + 50
 
         WlrLayershell.layer: WlrLayer.Top
         WlrLayershell.namespace: "molten-left"
@@ -183,19 +183,19 @@ ShellRoot {
         
         // Timer to delay hiding after mouse leaves
         Timer {
-            id: leftHideTimer
+            id: workspaceHideTimer
             interval: 1000
             repeat: false
             onTriggered: {
-                if (!leftHoverArea.containsMouse && !leftBar.barIsHovered) {
-                    leftBar.hoverActive = false
+                if (!workspaceHoverArea.containsMouse && !workspaceBar.barIsHovered) {
+                    workspaceBar.hoverActive = false
                 }
             }
         }
 
         // Hover detection zone - FIXED SIZE to prevent flickering
         MouseArea {
-            id: leftHoverArea
+            id: workspaceHoverArea
             z: 100  // Ensure it's above the bar content
             hoverEnabled: true
             propagateComposedEvents: true
@@ -206,38 +206,38 @@ ShellRoot {
             anchors.bottom: parent.bottom
             anchors.leftMargin: 0
             anchors.bottomMargin: 0  // Stay at absolute bottom
-            width: leftBarContent.implicitWidth + 24  // Fixed to content size + padding
+            width: workspaceBarContent.implicitWidth + 24  // Fixed to content size + padding
             height: 1  // Trigger only on edge hit
             
             onContainsMouseChanged: {
                 if (containsMouse) {
-                    leftHideTimer.stop()
-                    leftBar.hoverActive = true
+                    workspaceHideTimer.stop()
+                    workspaceBar.hoverActive = true
                 } else {
-                    leftHideTimer.restart()
+                    workspaceHideTimer.restart()
                 }
             }
         }
 
-        LeftBar {
-            id: leftBarContent
+        WorkspaceBar {
+            id: workspaceBarContent
             z: 1  // Below the MouseArea
             anchors.left: parent.left
             anchors.bottom: parent.bottom
             anchors.leftMargin: 6
             anchors.bottomMargin: 6
-            showBar: leftBar.reveal
-            onLauncherRequested: notchContent.openView("launcher")
+            showBar: workspaceBar.reveal
+            onLauncherRequested: mainBarContent.openView("launcher")
             onOverviewRequested: State.toggleOverview()
-            onBarHoverChanged: (hovering) => root.handleBarHover(leftBar, leftHideTimer, leftHoverArea, hovering)
+            onBarHoverChanged: (hovering) => root.handleBarHover(workspaceBar, workspaceHideTimer, workspaceHoverArea, hovering)
         }
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // RIGHT BAR - Power, Toolbar, System Tray
+    // STATUS BAR - Power, Toolbar, System Tray
     // ═══════════════════════════════════════════════════════════════
     PanelWindow {
-        id: rightBar
+        id: statusBar
         visible: !State.isFullscreen
 
         anchors {
@@ -248,7 +248,7 @@ ShellRoot {
         margins.right: 0
 
         implicitHeight: reveal ? 56 : 1
-        implicitWidth: rightBarContent.implicitWidth + 50
+        implicitWidth: statusBarContent.implicitWidth + 50
 
         WlrLayershell.layer: WlrLayer.Top
         WlrLayershell.namespace: "molten-right"
@@ -266,19 +266,19 @@ ShellRoot {
         
         // Timer to delay hiding after mouse leaves
         Timer {
-            id: rightHideTimer
+            id: statusHideTimer
             interval: 1000
             repeat: false
             onTriggered: {
-                if (!rightHoverArea.containsMouse && !rightBar.barIsHovered && !rightBar.trayMenuActive) {
-                    rightBar.hoverActive = false
+                if (!statusHoverArea.containsMouse && !statusBar.barIsHovered && !statusBar.trayMenuActive) {
+                    statusBar.hoverActive = false
                 }
             }
         }
 
         // Hover detection zone - FIXED SIZE to prevent flickering
         MouseArea {
-            id: rightHoverArea
+            id: statusHoverArea
             z: 100  // Ensure it's above the bar content
             hoverEnabled: true
             propagateComposedEvents: true
@@ -289,38 +289,38 @@ ShellRoot {
             anchors.bottom: parent.bottom
             anchors.rightMargin: 0
             anchors.bottomMargin: 0  // Stay at absolute bottom
-            width: rightBarContent.implicitWidth + 24  // Fixed to content size + padding
+            width: statusBarContent.implicitWidth + 24  // Fixed to content size + padding
             height: 1  // Trigger only on edge hit
             
             onContainsMouseChanged: {
                 if (containsMouse) {
-                    rightHideTimer.stop()
-                    rightBar.hoverActive = true
+                    statusHideTimer.stop()
+                    statusBar.hoverActive = true
                 } else {
-                    rightHideTimer.restart()
+                    statusHideTimer.restart()
                 }
             }
         }
 
-        RightBar {
-            id: rightBarContent
+        StatusBar {
+            id: statusBarContent
             z: 1  // Below the MouseArea
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.rightMargin: 6
             anchors.bottomMargin: 6
-            parentWindow: rightBar
-            showBar: rightBar.reveal
-            onPowerRequested: notchContent.openView("power")
-            onToolbarRequested: notchContent.openView("toolbar")
-            onBarHoverChanged: (hovering) => root.handleBarHover(rightBar, rightHideTimer, rightHoverArea, hovering)
+            parentWindow: statusBar
+            showBar: statusBar.reveal
+            onPowerRequested: mainBarContent.openView("power")
+            onToolbarRequested: mainBarContent.openView("toolbar")
+            onBarHoverChanged: (hovering) => root.handleBarHover(statusBar, statusHideTimer, statusHoverArea, hovering)
             onTrayMenuActiveChanged: (active) => {
-                rightBar.trayMenuActive = active
+                statusBar.trayMenuActive = active
                 if (active) {
-                    rightHideTimer.stop()
-                    rightBar.hoverActive = true
+                    statusHideTimer.stop()
+                    statusBar.hoverActive = true
                 } else {
-                    rightHideTimer.restart()
+                    statusHideTimer.restart()
                 }
             }
         }
@@ -356,40 +356,40 @@ ShellRoot {
         Rectangle { width: 1; height: 1; color: "transparent" }
     }
 
-    // Left bar glass backdrop
+    // Workspace bar glass backdrop
     GlassBackdrop {
         backdropName: "left"
-        targetWidth: leftBarContent.implicitWidth
-        targetHeight: leftBarContent.implicitHeight
+        targetWidth: workspaceBarContent.implicitWidth
+        targetHeight: workspaceBarContent.implicitHeight
         screenWidth: root.screenWidth
         screenHeight: root.screenHeight
         horizontalAlign: "left"
         // Always visible - yOffset handles positioning off-screen when hidden
         backdropVisible: true
-        yOffset: leftBarContent.yPosition  // Sync with slide animation
+        yOffset: workspaceBarContent.yPosition  // Sync with slide animation
         startupDelay: 50
     }
 
-    // Right bar glass backdrop
+    // Status bar glass backdrop
     GlassBackdrop {
         backdropName: "right"
-        targetWidth: rightBarContent.implicitWidth
-        targetHeight: rightBarContent.implicitHeight
+        targetWidth: statusBarContent.implicitWidth
+        targetHeight: statusBarContent.implicitHeight
         screenWidth: root.screenWidth
         screenHeight: root.screenHeight
         horizontalAlign: "right"
         // Always visible - yOffset handles positioning off-screen when hidden
         backdropVisible: true
-        yOffset: rightBarContent.yPosition  // Sync with slide animation
+        yOffset: statusBarContent.yPosition  // Sync with slide animation
         startupDelay: 100
     }
 
-    // Notch glass backdrop (declared last for proper render order)
+    // Main bar glass backdrop (declared last for proper render order)
     GlassBackdrop {
-        id: notchGlassBackdrop
+        id: mainBarGlassBackdrop
         backdropName: "notch"
-        targetWidth: notchRegionContainer.width
-        targetHeight: notchRegionContainer.height
+        targetWidth: mainBarRegionContainer.width
+        targetHeight: mainBarRegionContainer.height
         screenWidth: root.screenWidth
         screenHeight: root.screenHeight
         horizontalAlign: "center"

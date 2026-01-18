@@ -1,8 +1,9 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import ".." as Root
-import ".."
+import "../.." as Root
+import "../.."
+import "../effects"
 
 // Exact Ambxst animation structure
 Item {
@@ -208,11 +209,11 @@ Item {
 
     // Screen view mapping
     readonly property var screenViews: ({
-        "launcher": "../screens/AppLauncher.qml",
-        "live": "../screens/LiveScreen.qml",
-        "notifications": "../screens/NotificationScreen.qml",
-        "toolbar": "../screens/ToolbarScreen.qml",
-        "power": "../screens/PowerScreen.qml"
+        "launcher": "../../screens/AppLauncher.qml",
+        "live": "../../screens/LiveScreen.qml",
+        "notifications": "../../screens/NotificationScreen.qml",
+        "toolbar": "../../screens/ToolbarScreen.qml",
+        "power": "../../screens/PowerScreen.qml"
     })
 
     // Dynamic screen loader component

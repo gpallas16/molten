@@ -1,7 +1,10 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import ".."
+import "../.."
+import "../effects"
+import "../behavior"
+import "../widgets"
 
 Item {
     id: root

@@ -2,7 +2,9 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Services.SystemTray
 import Quickshell.Widgets
-import ".."
+import "../.."
+import "../effects"
+import "../behavior"
 
 Item {
     id: root
