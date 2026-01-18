@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import "../../globals" as Root
 import "../../globals"
 import "../effects"
+import "../behavior"
 
 // Exact Ambxst animation structure
 Item {
@@ -13,10 +14,24 @@ Item {
     property bool isExpanded: currentView !== "default"
     property bool screenNotchOpen: isExpanded
 
+    // Discrete mode: bar shrinks to a minimal notch showing only time and notification
+    property bool discreteMode: false
+    property bool discreteModeEnabled: true  // Master toggle for discrete mode behavior
+    
+    // Signal for parent to detect hover on the bar
+    signal barHoverChanged(bool hovering)
     signal closeRequested()
 
     // Ambxst uses 300ms
     property int animDuration: Root.State.animDuration
+    
+    // Discrete mode dimensions - wider to fit time + notification icon
+    readonly property int discreteWidth: 110
+    readonly property int discreteHeight: 24
+    readonly property int normalHeight: 44
+    
+    // Discrete mode uses flat bottom (attached to screen edge)
+    property bool discreteFlatBottom: discreteMode && !screenNotchOpen
     
     // Adaptive colors based on background
     AdaptiveColors {
@@ -46,16 +61,29 @@ Item {
     }
 
     // CRITICAL: Ambxst animates implicitWidth/Height on the ROOT Item
-    implicitWidth: screenNotchOpen 
-        ? Math.max(stackContainer.width + 32 + animationTrigger * 0, 290) 
-        : stackContainer.width + 24
-    implicitHeight: screenNotchOpen 
-        ? Math.max(stackContainer.height + 32 + animationTrigger * 0, 44) 
-        : 44
+    // In discrete mode, shrink to minimal notch; otherwise use normal sizes
+    implicitWidth: {
+        if (discreteMode && !screenNotchOpen) {
+            return discreteWidth
+        } else if (screenNotchOpen) {
+            return Math.max(stackContainer.width + 32 + animationTrigger * 0, 290)
+        } else {
+            return stackContainer.width + 24
+        }
+    }
+    implicitHeight: {
+        if (discreteMode && !screenNotchOpen) {
+            return discreteHeight
+        } else if (screenNotchOpen) {
+            return Math.max(stackContainer.height + 32 + animationTrigger * 0, 44)
+        } else {
+            return normalHeight
+        }
+    }
 
     // Ambxst: Behavior on implicitWidth/Height with conditional easing
     Behavior on implicitWidth {
-        enabled: (screenNotchOpen || stackViewInternal.busy) && animDuration > 0
+        enabled: (screenNotchOpen || stackViewInternal.busy || discreteMode !== undefined) && animDuration > 0
         NumberAnimation {
             duration: animDuration
             easing.type: screenNotchOpen ? Easing.OutBack : Easing.OutQuart
@@ -64,7 +92,7 @@ Item {
     }
 
     Behavior on implicitHeight {
-        enabled: (screenNotchOpen || stackViewInternal.busy) && animDuration > 0
+        enabled: (screenNotchOpen || stackViewInternal.busy || discreteMode !== undefined) && animDuration > 0
         NumberAnimation {
             duration: animDuration
             easing.type: screenNotchOpen ? Easing.OutBack : Easing.OutQuart
@@ -73,7 +101,19 @@ Item {
     }
 
     ShadowBorder {
-        radius: screenNotchOpen ? Theme.containerRoundness : Theme.barRoundness
+        // In discrete mode, use smaller roundness for the notch look
+        radius: {
+            if (discreteMode && !screenNotchOpen) {
+                return 12  // Rounded top corners for notch
+            } else if (screenNotchOpen) {
+                return Theme.containerRoundness
+            } else {
+                return Theme.barRoundness
+            }
+        }
+        
+        // Flat bottom in discrete mode (attached to edge)
+        flatBottom: discreteFlatBottom
         
         Behavior on radius {
             enabled: animDuration > 0
@@ -135,13 +175,20 @@ Item {
     Component {
         id: defaultViewComponent
         Item {
-            implicitWidth: defaultRow.implicitWidth
-            implicitHeight: 36
+            implicitWidth: discreteMode ? discreteRow.implicitWidth : defaultRow.implicitWidth
+            implicitHeight: discreteMode ? 20 : 36
 
+            // Full default row (visible when not in discrete mode)
             RowLayout {
                 id: defaultRow
                 anchors.centerIn: parent
                 spacing: 10
+                visible: !discreteMode
+                opacity: discreteMode ? 0 : 1
+                
+                Behavior on opacity {
+                    NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
+                }
 
                 Item {
                     width: 28; height: 28
@@ -159,7 +206,7 @@ Item {
                 Rectangle { width: 4; height: 4; radius: 2; color: adaptiveColors.subtleTextColor }
 
                 Text {
-                    id: timeText
+                    id: timeTextFull
                     color: adaptiveColors.textColor
                     font.pixelSize: 13
                     font.weight: Font.Medium
@@ -168,7 +215,7 @@ Item {
                     text: now.getHours().toString().padStart(2,'0') + ":" + now.getMinutes().toString().padStart(2,'0')
                     Timer {
                         interval: 1000; running: true; repeat: true
-                        onTriggered: timeText.now = new Date()
+                        onTriggered: timeTextFull.now = new Date()
                     }
                     MouseArea {
                         anchors.fill: parent
@@ -182,15 +229,14 @@ Item {
                 Item {
                     width: 28; height: 28
                     
-                        Text {
-                            anchors.centerIn: parent
-                            text: Root.State.notifications ? Root.State.notifications.length.toString() : "0"
-                            color: adaptiveColors.textColor
-                            font.pixelSize: 11
-                            font.weight: Font.DemiBold
-                            z: 1
-                        }
-                   
+                    Text {
+                        anchors.centerIn: parent
+                        text: Root.State.notifications ? Root.State.notifications.length.toString() : "0"
+                        color: adaptiveColors.textColor
+                        font.pixelSize: 11
+                        font.weight: Font.DemiBold
+                        z: 1
+                    }
                     
                     Text {
                         anchors.centerIn: parent
@@ -201,6 +247,61 @@ Item {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
                         onClicked: notchContainer.openView("notifications")
+                    }
+                }
+            }
+            
+            // Discrete mode row (minimal: time + notification icon)
+            Row {
+                id: discreteRow
+                anchors.centerIn: parent
+                anchors.verticalCenterOffset: -1  // Slight offset since attached to bottom
+                spacing: 10
+                visible: discreteMode
+                opacity: discreteMode ? 1 : 0
+                
+                Behavior on opacity {
+                    NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
+                }
+
+                Text {
+                    id: timeTextDiscrete
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: adaptiveColors.textColor
+                    font.pixelSize: 13
+                    font.weight: Font.Medium
+                    font.family: "monospace"
+                    property date now: new Date()
+                    text: now.getHours().toString().padStart(2,'0') + ":" + now.getMinutes().toString().padStart(2,'0')
+                    Timer {
+                        interval: 1000; running: true; repeat: true
+                        onTriggered: timeTextDiscrete.now = new Date()
+                    }
+                }
+
+                // Notification icon (on the right side)
+                Item {
+                    width: 16
+                    height: 16
+                    anchors.verticalCenter: parent.verticalCenter
+                    
+                    Text {
+                        anchors.centerIn: parent
+                        anchors.verticalCenterOffset: -1
+                        text: Root.State.notifications && Root.State.notifications.length > 0 
+                              ? Root.State.notifications.length.toString() 
+                              : ""
+                        color: adaptiveColors.textColor
+                        font.pixelSize: 9
+                        font.weight: Font.DemiBold
+                        z: 1
+                    }
+                    
+                    Text {
+                        anchors.centerIn: parent
+                        text: "🔔"
+                        font.pixelSize: 13
+                        opacity: Root.State.notifications && Root.State.notifications.length > 0 ? 0.7 : 1.0
                     }
                 }
             }
@@ -249,4 +350,9 @@ Item {
     }
 
     Keys.onEscapePressed: if (isExpanded) closeView()
+    
+    // Hover detection for the entire bar (used for discrete mode toggle)
+    BarHoverDetector {
+        onHoverChanged: (hovering) => notchContainer.barHoverChanged(hovering)
+    }
 }

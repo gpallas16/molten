@@ -53,7 +53,7 @@ FloatingWindow {
     onImplicitHeightChanged: if (windowReady) updatePosition()
     
     Timer {
-        interval: 8
+        interval: 16
         repeat: true
         running: root.visible && root.windowReady
         onTriggered: root.updatePosition()

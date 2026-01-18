@@ -15,6 +15,13 @@ ShellRoot {
     // Current screen state (synced with main bar)
     property string currentScreen: "none"
     
+    // Fullscreen detection - direct binding for reactivity
+    readonly property bool isFullscreen: {
+        var toplevel = ToplevelManager.activeToplevel
+        if (!toplevel) return false
+        return toplevel.fullscreen
+    }
+    
     // Screen dimensions - get from Hyprland monitor
     property int screenWidth: {
         var monitor = Hyprland.monitors.values[0]
@@ -86,7 +93,8 @@ ShellRoot {
     // ═══════════════════════════════════════════════════════════════
     PanelWindow {
         id: mainBarWindow
-        visible: !State.isFullscreen
+        // Hide when active window is fullscreen
+        visible: !root.isFullscreen
 
         // AMBXST: Full screen window, main bar floats inside
         anchors {
@@ -97,6 +105,70 @@ ShellRoot {
         }
 
         color: "transparent"
+
+        // Hover state for discrete mode
+        property bool hoverActive: false
+        property bool barIsHovered: false
+        
+        // Discrete mode reveal logic - similar to workspace/status bars
+        readonly property bool shouldBeDiscrete: {
+            // If hovering, don't be discrete
+            if (hoverActive) return false
+            
+            // If main bar is expanded, don't be discrete
+            if (mainBarContent.isExpanded) return false
+            
+            // Check if current workspace has any windows
+            var currentWs = Root.State.activeWorkspace
+            var wsData = Hyprland.workspaces.values.find(function(ws) { return ws.id === currentWs })
+            
+            // Check if toplevels has any items
+            var hasToplevels = false
+            if (wsData && wsData.toplevels && wsData.toplevels.values && wsData.toplevels.values.length > 0) {
+                hasToplevels = true
+            }
+            
+            // If workspace is empty, don't be discrete
+            if (!wsData || !hasToplevels) return false
+            
+            // Otherwise, check if there's a focused window IN THIS WORKSPACE
+            var toplevel = ToplevelManager.activeToplevel
+            if (!toplevel) return false  // No toplevel, don't be discrete
+            
+            // Check if the active toplevel is in the current workspace
+            var toplevelAddress = toplevel.HyprlandToplevel ? toplevel.HyprlandToplevel.address : null
+            
+            if (toplevelAddress) {
+                // Find the window in this workspace's toplevels
+                var isInCurrentWorkspace = false
+                if (wsData.toplevels && wsData.toplevels.values) {
+                    for (var i = 0; i < wsData.toplevels.values.length; i++) {
+                        if (wsData.toplevels.values[i].address === toplevelAddress) {
+                            isInCurrentWorkspace = true
+                            break
+                        }
+                    }
+                }
+                
+                // If the active toplevel is NOT in this workspace, don't be discrete
+                if (!isInCurrentWorkspace) return false
+            }
+            
+            // The toplevel is in this workspace and activated, be discrete
+            return toplevel.activated
+        }
+        
+        // Timer to delay entering discrete mode after mouse leaves
+        Timer {
+            id: mainBarDiscreteTimer
+            interval: 1000
+            repeat: false
+            onTriggered: {
+                if (!mainBarHoverArea.containsMouse && !mainBarWindow.barIsHovered) {
+                    mainBarWindow.hoverActive = false
+                }
+            }
+        }
 
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "molten-notch"
@@ -127,13 +199,24 @@ ShellRoot {
             id: mainBarRegionContainer
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 6
+            // In discrete mode, attach to edge (no margin); otherwise float with margin
+            anchors.bottomMargin: mainBarContent.discreteMode ? 0 : 6
             width: mainBarContent.implicitWidth
             height: mainBarContent.implicitHeight
+            
+            Behavior on anchors.bottomMargin {
+                NumberAnimation {
+                    duration: 300
+                    easing.type: Easing.OutQuart
+                }
+            }
 
             MainBar {
                 id: mainBarContent
                 anchors.centerIn: parent
+                
+                // Discrete mode binding - controlled by shell
+                discreteMode: mainBarWindow.shouldBeDiscrete
 
                 onCurrentViewChanged: {
                     root.currentScreen = currentView === "default" ? "none" : currentView
@@ -144,9 +227,52 @@ ShellRoot {
                     var radius = isExpanded ? Theme.containerRoundness : Theme.barRoundness
                     Hyprland.dispatch("exec hyprctl setprop title:^molten-glass-notch$ rounding " + radius)
                 }
+                
+                onDiscreteModeChanged: {
+                    // Update glass backdrop rounding when entering/exiting discrete mode
+                    if (!isExpanded) {
+                        var radius = discreteMode ? (discreteHeight / 2) : Theme.barRoundness
+                        Hyprland.dispatch("exec hyprctl setprop title:^molten-glass-notch$ rounding " + radius)
+                    }
+                }
 
                 onCloseRequested: {
                     root.currentScreen = "none"
+                }
+                
+                onBarHoverChanged: (hovering) => {
+                    mainBarWindow.barIsHovered = hovering
+                    if (hovering) {
+                        mainBarDiscreteTimer.stop()
+                        mainBarWindow.hoverActive = true
+                    } else {
+                        mainBarDiscreteTimer.restart()
+                    }
+                }
+            }
+        }
+        
+        // Hover detection zone at the bottom center for revealing main bar from discrete mode
+        MouseArea {
+            id: mainBarHoverArea
+            z: 100
+            hoverEnabled: true
+            propagateComposedEvents: true
+            onPressed: (mouse) => mouse.accepted = false
+            
+            // Position at bottom center
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 0
+            width: mainBarContent.discreteMode ? 120 : mainBarContent.implicitWidth + 24
+            height: 1  // Trigger only on edge hit
+            
+            onContainsMouseChanged: {
+                if (containsMouse) {
+                    mainBarDiscreteTimer.stop()
+                    mainBarWindow.hoverActive = true
+                } else {
+                    mainBarDiscreteTimer.restart()
                 }
             }
         }
@@ -157,7 +283,7 @@ ShellRoot {
     // ═══════════════════════════════════════════════════════════════
     PanelWindow {
         id: workspaceBar
-        visible: !State.isFullscreen
+        visible: !root.isFullscreen
 
         anchors {
             bottom: true
@@ -239,7 +365,7 @@ ShellRoot {
     // ═══════════════════════════════════════════════════════════════
     PanelWindow {
         id: statusBar
-        visible: !State.isFullscreen
+        visible: !root.isFullscreen
         
         // Hover state with delay (Ambxst pattern)
         property bool hoverActive: false
@@ -334,7 +460,7 @@ ShellRoot {
     // Dummy window to absorb the first-render bug (1px, invisible)
     FloatingWindow {
         id: dummyGlassWindow
-        visible: !State.isFullscreen
+        visible: !root.isFullscreen
         title: "molten-glass-dummy"
         
         implicitWidth: 1
@@ -395,5 +521,6 @@ ShellRoot {
         screenHeight: root.screenHeight
         horizontalAlign: "center"
         startupDelay: 150
+        backdropVisible: !root.isFullscreen
     }
 }
