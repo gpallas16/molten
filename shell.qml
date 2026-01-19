@@ -140,8 +140,12 @@ ShellRoot {
                 if (barState === "discrete" || barState === "hidden") {
                     barState = "floating"
                 }
+            } else {
+                // Has windows - go to discrete if not being hovered
+                if (barState === "floating" && !barIsHovered) {
+                    barState = "discrete"
+                }
             }
-            // When shouldBeDiscrete becomes true, timer will handle transition from floating
         }
         
         // Timer to return from floating to discrete
