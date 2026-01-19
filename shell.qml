@@ -77,14 +77,13 @@ ShellRoot {
         return !toplevel.activated
     }
     
-    // Reusable function for handling bar hover changes
-    function handleBarHover(barObj, timerObj, hoverAreaObj, hovering) {
+    // When hovering the bar itself, keep it visible
+    function handleBarHover(barObj, hideTimer, showTimer, hovering) {
         barObj.barIsHovered = hovering
         if (hovering) {
-            timerObj.stop()
-            barObj.hoverActive = true
+            hideTimer.stop()
         } else {
-            timerObj.restart()
+            hideTimer.restart()
         }
     }
 
@@ -314,34 +313,48 @@ ShellRoot {
             interval: 1000
             repeat: false
             onTriggered: {
-                if (!workspaceHoverArea.containsMouse && !workspaceBar.barIsHovered) {
+                if (!workspaceBar.barIsHovered && !workspaceHoverArea.containsMouse) {
                     workspaceBar.hoverActive = false
                 }
             }
         }
+        
+        // Timer to delay showing when mouse enters edge
+        Timer {
+            id: workspaceShowTimer
+            interval: 500
+            repeat: false
+            onTriggered: {
+                workspaceBar.hoverActive = true
+                workspaceHideTimer.restart()
+            }
+        }
 
-        // Hover detection zone - FIXED SIZE to prevent flickering
+        // Hover detection zone at bottom edge
         MouseArea {
             id: workspaceHoverArea
-            z: 100  // Ensure it's above the bar content
+            z: 100
             hoverEnabled: true
             propagateComposedEvents: true
             onPressed: (mouse) => mouse.accepted = false
             
-            // Position at bottom-left - ABSOLUTE position at screen bottom
             anchors.left: parent.left
             anchors.bottom: parent.bottom
             anchors.leftMargin: 0
-            anchors.bottomMargin: 0  // Stay at absolute bottom
-            width: workspaceBarContent.implicitWidth + 24  // Fixed to content size + padding
-            height: 1  // Trigger only on edge hit
+            anchors.bottomMargin: 0
+            width: workspaceBarContent.implicitWidth + 24
+            height: 56  // Same as bar height to prevent false leave events
             
             onContainsMouseChanged: {
                 if (containsMouse) {
-                    workspaceHideTimer.stop()
-                    workspaceBar.hoverActive = true
+                    if (!workspaceBar.hoverActive) {
+                        workspaceShowTimer.restart()
+                    }
                 } else {
-                    workspaceHideTimer.restart()
+                    workspaceShowTimer.stop()
+                    if (workspaceBar.hoverActive && !workspaceBar.barIsHovered) {
+                        workspaceHideTimer.restart()
+                    }
                 }
             }
         }
@@ -356,7 +369,7 @@ ShellRoot {
             showBar: workspaceBar.reveal
             onLauncherRequested: mainBarContent.openView("launcher")
             onOverviewRequested: State.toggleOverview()
-            onBarHoverChanged: (hovering) => root.handleBarHover(workspaceBar, workspaceHideTimer, workspaceHoverArea, hovering)
+            onBarHoverChanged: (hovering) => root.handleBarHover(workspaceBar, workspaceHideTimer, workspaceShowTimer, hovering)
         }
     }
 
@@ -397,34 +410,48 @@ ShellRoot {
             interval: 1000
             repeat: false
             onTriggered: {
-                if (!statusHoverArea.containsMouse && !statusBar.barIsHovered && !statusBar.trayMenuActive) {
+                if (!statusBar.barIsHovered && !statusBar.trayMenuActive && !statusHoverArea.containsMouse) {
                     statusBar.hoverActive = false
                 }
             }
         }
+        
+        // Timer to delay showing when mouse enters edge
+        Timer {
+            id: statusShowTimer
+            interval: 500
+            repeat: false
+            onTriggered: {
+                statusBar.hoverActive = true
+                statusHideTimer.restart()
+            }
+        }
 
-        // Hover detection zone - FIXED SIZE to prevent flickering
+        // Hover detection zone at bottom edge
         MouseArea {
             id: statusHoverArea
-            z: 100  // Ensure it's above the bar content
+            z: 100
             hoverEnabled: true
             propagateComposedEvents: true
             onPressed: (mouse) => mouse.accepted = false
             
-            // Position at bottom-right - ABSOLUTE position at screen bottom
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.rightMargin: 0
-            anchors.bottomMargin: 0  // Stay at absolute bottom
-            width: statusBarContent.implicitWidth + 24  // Fixed to content size + padding
-            height: 1  // Trigger only on edge hit
+            anchors.bottomMargin: 0
+            width: statusBarContent.implicitWidth + 24
+            height: 56  // Same as bar height to prevent false leave events
             
             onContainsMouseChanged: {
                 if (containsMouse) {
-                    statusHideTimer.stop()
-                    statusBar.hoverActive = true
+                    if (!statusBar.hoverActive) {
+                        statusShowTimer.restart()
+                    }
                 } else {
-                    statusHideTimer.restart()
+                    statusShowTimer.stop()
+                    if (statusBar.hoverActive && !statusBar.barIsHovered) {
+                        statusHideTimer.restart()
+                    }
                 }
             }
         }
@@ -440,7 +467,7 @@ ShellRoot {
             showBar: statusBar.reveal
             onPowerRequested: mainBarContent.openView("power")
             onToolbarRequested: mainBarContent.openView("toolbar")
-            onBarHoverChanged: (hovering) => root.handleBarHover(statusBar, statusHideTimer, statusHoverArea, hovering)
+            onBarHoverChanged: (hovering) => root.handleBarHover(statusBar, statusHideTimer, statusShowTimer, hovering)
             onTrayMenuActiveChanged: (active) => {
                 statusBar.trayMenuActive = active
                 if (active) {
