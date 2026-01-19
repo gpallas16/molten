@@ -307,6 +307,15 @@ ShellRoot {
         // Reveal logic - use shared function
         readonly property bool reveal: root.shouldRevealBar(hoverActive)
         
+        // Auto-reveal when workspace changes
+        Connections {
+            target: Root.State
+            function onActiveWorkspaceChanged() {
+                workspaceBar.hoverActive = true
+                workspaceHideTimer.restart()
+            }
+        }
+        
         // Timer to delay hiding after mouse leaves
         Timer {
             id: workspaceHideTimer
