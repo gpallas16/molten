@@ -105,84 +105,114 @@ ShellRoot {
 
         color: "transparent"
 
-        // Hover state for discrete mode
-        property bool hoverActive: false
-        property bool barIsHovered: false
+        // State: "discrete" (docked), "hidden", "floating"
+        property string barState: "discrete"
         
-        // Discrete mode reveal logic - similar to workspace/status bars
+        // Discrete mode: docked to edge when there are active windows
         readonly property bool shouldBeDiscrete: {
-            // If hovering, don't be discrete
-            if (hoverActive) return false
-            
-            // If main bar is expanded, don't be discrete
             if (mainBarContent.isExpanded) return false
             
-            // Check if current workspace has any windows
             var currentWs = Root.State.activeWorkspace
             var wsData = Hyprland.workspaces.values.find(function(ws) { return ws.id === currentWs })
             
-            // Check if toplevels has any items
-            var hasToplevels = false
-            if (wsData && wsData.toplevels && wsData.toplevels.values && wsData.toplevels.values.length > 0) {
-                hasToplevels = true
+            if (!wsData || !wsData.toplevels || !wsData.toplevels.values || wsData.toplevels.values.length === 0) {
+                return false
             }
             
-            // If workspace is empty, don't be discrete
-            if (!wsData || !hasToplevels) return false
-            
-            // Otherwise, check if there's a focused window IN THIS WORKSPACE
             var toplevel = ToplevelManager.activeToplevel
-            if (!toplevel) return false  // No toplevel, don't be discrete
+            if (!toplevel) return false
             
-            // Check if the active toplevel is in the current workspace
             var toplevelAddress = toplevel.HyprlandToplevel ? toplevel.HyprlandToplevel.address : null
+            if (!toplevelAddress) return false
             
-            if (toplevelAddress) {
-                // Find the window in this workspace's toplevels
-                var isInCurrentWorkspace = false
-                if (wsData.toplevels && wsData.toplevels.values) {
-                    for (var i = 0; i < wsData.toplevels.values.length; i++) {
-                        if (wsData.toplevels.values[i].address === toplevelAddress) {
-                            isInCurrentWorkspace = true
-                            break
-                        }
-                    }
+            for (var i = 0; i < wsData.toplevels.values.length; i++) {
+                if (wsData.toplevels.values[i].address === toplevelAddress) {
+                    return toplevel.activated
                 }
-                
-                // If the active toplevel is NOT in this workspace, don't be discrete
-                if (!isInCurrentWorkspace) return false
             }
-            
-            // The toplevel is in this workspace and activated, be discrete
-            return toplevel.activated
+            return false
         }
         
-        // Timer to delay entering discrete mode after mouse leaves
+        // When conditions change, switch states appropriately
+        onShouldBeDiscreteChanged: {
+            if (!shouldBeDiscrete) {
+                // No windows - always go to floating (from discrete or hidden)
+                if (barState === "discrete" || barState === "hidden") {
+                    barState = "floating"
+                }
+            }
+            // When shouldBeDiscrete becomes true, timer will handle transition from floating
+        }
+        
+        // Timer to return from floating to discrete
         Timer {
             id: mainBarDiscreteTimer
             interval: 1000
-            repeat: false
             onTriggered: {
-                if (!mainBarHoverArea.containsMouse && !mainBarWindow.barIsHovered) {
-                    mainBarWindow.hoverActive = false
+                if (mainBarWindow.barState === "floating" && !mainBarWindow.barIsHovered && mainBarWindow.shouldBeDiscrete) {
+                    mainBarWindow.barState = "discrete"
                 }
+                // If shouldBeDiscrete is false, stay floating
             }
         }
+        
+        property bool barIsHovered: false
 
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "molten-notch"
         WlrLayershell.keyboardFocus: mainBarContent.isExpanded ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         exclusionMode: ExclusionMode.Ignore
 
-        // Mask: full window when expanded (to catch outside clicks), just main bar when collapsed
+        // Mask: full window when expanded, bar + edge trigger when collapsed
         mask: Region {
-            item: mainBarContent.isExpanded ? fullWindowMask : mainBarRegionContainer
+            item: mainBarContent.isExpanded ? fullWindowMask : mainBarMaskContainer
         }
 
         // Full window mask for catching outside clicks when expanded
         Item {
             id: fullWindowMask
             anchors.fill: parent
+        }
+        
+        // Combined mask for bar region + edge trigger area (so edge works when bar is hidden)
+        Item {
+            id: mainBarMaskContainer
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            width: Math.max(mainBarRegionContainer.width, mainBarEdgeTrigger.width)
+            height: mainBarRegionContainer.height + 6 + 10  // bar + margin + edge trigger buffer
+        }
+        
+        // Hover zone that stays at discrete position - detects when mouse leaves the bar area
+        MouseArea {
+            id: discreteHoverZone
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            width: mainBarContent.implicitWidth
+            height: mainBarContent.implicitHeight
+            hoverEnabled: true
+            propagateComposedEvents: true
+            acceptedButtons: Qt.NoButton
+            
+            onContainsMouseChanged: {
+                if (mainBarWindow.barState === "hidden") {
+                    if (containsMouse) {
+                        // Mouse still in zone - stay hidden
+                    } else {
+                        // Mouse left zone - show discrete
+                        mainBarWindow.barState = "discrete"
+                    }
+                }
+            }
+        }
+        
+        // Edge trigger zone - always at bottom edge, always in mask
+        Item {
+            id: mainBarEdgeTrigger
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            width: 200
+            height: 10
         }
 
         // Click outside expanded main bar to close (full window area)
@@ -198,37 +228,45 @@ ShellRoot {
             id: mainBarRegionContainer
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            // In discrete mode, attach to edge (no margin); otherwise float with margin
-            anchors.bottomMargin: mainBarContent.discreteMode ? 0 : 6
+            // Position based on state: discrete=docked, hidden=off-screen, floating=with margin
+            anchors.bottomMargin: {
+                if (mainBarWindow.barState === "hidden") return -mainBarContent.implicitHeight - 10
+                if (mainBarWindow.barState === "floating") return 6
+                return 0  // discrete - docked
+            }
             width: mainBarContent.implicitWidth
             height: mainBarContent.implicitHeight
             
+            // Y position for glass backdrop sync
+            property real yPosition: mainBarWindow.barState === "hidden" ? (mainBarContent.implicitHeight + 10) : 0
+            
+            opacity: mainBarWindow.barState === "hidden" ? 0 : 1
+            
             Behavior on anchors.bottomMargin {
-                NumberAnimation {
-                    duration: 300
-                    easing.type: Easing.OutQuart
-                }
+                NumberAnimation { duration: 300; easing.type: Easing.OutQuart }
+            }
+            
+            Behavior on opacity {
+                NumberAnimation { duration: 200; easing.type: Easing.OutQuart }
             }
 
             MainBar {
                 id: mainBarContent
                 anchors.centerIn: parent
                 
-                // Discrete mode binding - controlled by shell
-                discreteMode: mainBarWindow.shouldBeDiscrete
+                // Discrete mode = docked state
+                discreteMode: mainBarWindow.barState === "discrete" && mainBarWindow.shouldBeDiscrete
 
                 onCurrentViewChanged: {
                     root.currentScreen = currentView === "default" ? "none" : currentView
                 }
 
                 onIsExpandedChanged: {
-                    // Update glass backdrop rounding dynamically when main bar expands/collapses
                     var radius = isExpanded ? Theme.containerRoundness : Theme.barRoundness
                     Hyprland.dispatch("exec hyprctl setprop title:^molten-glass-notch$ rounding " + radius)
                 }
                 
                 onDiscreteModeChanged: {
-                    // Update glass backdrop rounding when entering/exiting discrete mode
                     if (!isExpanded) {
                         var radius = discreteMode ? (discreteHeight / 2) : Theme.barRoundness
                         Hyprland.dispatch("exec hyprctl setprop title:^molten-glass-notch$ rounding " + radius)
@@ -239,19 +277,29 @@ ShellRoot {
                     root.currentScreen = "none"
                 }
                 
+                // Simple state machine
                 onBarHoverChanged: (hovering) => {
                     mainBarWindow.barIsHovered = hovering
+                    
                     if (hovering) {
                         mainBarDiscreteTimer.stop()
-                        mainBarWindow.hoverActive = true
+                        // Discrete + hover → Hidden
+                        if (mainBarWindow.barState === "discrete") {
+                            mainBarWindow.barState = "hidden"
+                        }
+                        // Floating + hover → stay floating
                     } else {
-                        mainBarDiscreteTimer.restart()
+                        // Floating + leave → start timer to go discrete
+                        if (mainBarWindow.barState === "floating") {
+                            mainBarDiscreteTimer.restart()
+                        }
+                        // Hidden state is handled by discreteHoverZone
                     }
                 }
             }
         }
         
-        // Hover detection zone at the bottom center for revealing main bar from discrete mode
+        // Edge detection - brings bar back from hidden as floating
         MouseArea {
             id: mainBarHoverArea
             z: 100
@@ -259,19 +307,16 @@ ShellRoot {
             propagateComposedEvents: true
             onPressed: (mouse) => mouse.accepted = false
             
-            // Position at bottom center
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 0
-            width: mainBarContent.discreteMode ? 120 : mainBarContent.implicitWidth + 24
-            height: 1  // Trigger only on edge hit
+            width: 200
+            height: 1
             
             onContainsMouseChanged: {
                 if (containsMouse) {
+                    // Edge hit → Floating (from any state)
                     mainBarDiscreteTimer.stop()
-                    mainBarWindow.hoverActive = true
-                } else {
-                    mainBarDiscreteTimer.restart()
+                    mainBarWindow.barState = "floating"
                 }
             }
         }
@@ -556,7 +601,9 @@ ShellRoot {
         screenWidth: root.screenWidth
         screenHeight: root.screenHeight
         horizontalAlign: "center"
-        startupDelay: 150
+        // Always visible - yOffset handles positioning off-screen when hidden
         backdropVisible: !root.isFullscreen
+        yOffset: mainBarRegionContainer.yPosition  // Sync with slide animation
+        startupDelay: 150
     }
 }

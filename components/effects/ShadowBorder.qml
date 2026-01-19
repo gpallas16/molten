@@ -5,7 +5,7 @@ Item {
     id: root
     
     property real radius: Theme.barRoundness
-    property real shadowOpacity: 0.6
+    property real shadowOpacity: 0.2
     property real shadowOffsetY: 2
     property bool flatBottom: false  // When true, bottom edge is flat (for notch attached to screen edge)
     
@@ -23,8 +23,8 @@ Item {
         model: flatBottom ? 0 : shadowLayers
         
         Rectangle {
-            anchors.fill: parent
             anchors.margins: -modelData.margin
+            anchors.fill: parent
             anchors.topMargin: -modelData.margin + shadowOffsetY * modelData.offsetMult
             radius: root.radius + modelData.margin
             color: "transparent"
