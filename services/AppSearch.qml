@@ -131,6 +131,9 @@ Singleton {
     readonly property list<DesktopEntry> list: Array.from(DesktopEntries.applications.values)
         .sort((a, b) => a.name.localeCompare(b.name))
     
+    // Signal emitted when apps are ready
+    signal appsReady()
+    
     // Index structure for fast searching
     property var searchIndex: []
     
@@ -160,10 +163,16 @@ Singleton {
     onListChanged: {
         allAppsCache = null;
         buildIndex();
+        if (list.length > 0) {
+            appsReady();
+        }
     }
     
     Component.onCompleted: {
         buildIndex();
+        if (list.length > 0) {
+            appsReady();
+        }
     }
     
     function getAllApps() {
