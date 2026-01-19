@@ -10,6 +10,7 @@ A dynamic island-style shell for Hyprland built with QuickShell.
 - **Notifications** - Full notification center with DND mode
 - **Toolbar** - Quick toggles, brightness/volume sliders, device pickers
 - **Power Menu** - Lock, suspend, reboot, shutdown, logout
+- **Keyboard Shortcuts** - Quick access to all features via Super key (see [KEYBINDS.md](KEYBINDS.md))
 
 ## Requirements
 
@@ -27,6 +28,22 @@ git clone https://github.com/yourusername/molten.git ~/.config/quickshell/molten
 # Or copy to QuickShell config
 cp -r molten ~/.config/quickshell/
 ```
+
+**Setup keyboard shortcuts:**
+
+Add to your `~/.config/hypr/hyprland.conf`:
+
+```conf
+source = ~/.config/molten/keybinds.conf
+```
+
+Then reload Hyprland:
+
+```bash
+hyprctl reload
+```
+
+See [KEYBINDS.md](KEYBINDS.md) for customization options.
 
 ## Running
 

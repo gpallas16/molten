@@ -12,6 +12,9 @@ Item {
     implicitWidth: 520
     implicitHeight: 600
 
+    // Forward focus to search input
+    onActiveFocusChanged: if (activeFocus) searchInput.forceActiveFocus()
+
     signal closeRequested()
 
     // State

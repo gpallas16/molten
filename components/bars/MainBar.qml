@@ -343,7 +343,11 @@ Item {
         Loader {
             property string screenSource: ""
             source: screenSource
-            onLoaded: if (item && item.closeRequested) item.closeRequested.connect(notchContainer.closeView)
+            onLoaded: {
+                if (item && item.closeRequested) item.closeRequested.connect(notchContainer.closeView)
+                // Focus the loaded item to enable keyboard input
+                if (item) item.forceActiveFocus()
+            }
         }
     }
 

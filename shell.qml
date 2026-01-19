@@ -15,6 +15,42 @@ ShellRoot {
     // Current screen state (synced with main bar)
     property string currentScreen: "none"
     
+    // ═══════════════════════════════════════════════════════════════
+    // KEYBIND HANDLER - Listen for Hyprland global shortcuts
+    // ═══════════════════════════════════════════════════════════════
+    
+    Connections {
+        target: Root.KeybindHandler
+        
+        function onKeybindTriggered(action) {
+            // Toggle behavior: if the requested view is already open, close it
+            if (mainBarContent.currentView === action) {
+                mainBarContent.closeView()
+                return
+            }
+            
+            switch (action) {
+                case "launcher":
+                    mainBarContent.openView("launcher")
+                    break
+                case "notifications":
+                    mainBarContent.openView("notifications")
+                    break
+                case "toolbar":
+                    mainBarContent.openView("toolbar")
+                    break
+                case "power":
+                    mainBarContent.openView("power")
+                    break
+                case "live":
+                    mainBarContent.openView("live")
+                    break
+                default:
+                    console.log("Unknown action:", action)
+            }
+        }
+    }
+    
     // Fullscreen detection - direct binding for reactivity
     readonly property bool isFullscreen: {
         var toplevel = ToplevelManager.activeToplevel
@@ -164,7 +200,7 @@ ShellRoot {
 
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "molten-notch"
-        WlrLayershell.keyboardFocus: mainBarContent.isExpanded ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+        WlrLayershell.keyboardFocus: mainBarContent.isExpanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         exclusionMode: ExclusionMode.Ignore
 
         // Mask: full window when expanded, bar + edge trigger when collapsed
