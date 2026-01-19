@@ -512,7 +512,7 @@ ShellRoot {
             onTriggered: {
                 dummyGlassWindow.windowReady = true
                 Hyprland.dispatch("resizewindowpixel exact 1 1,title:^molten-glass-dummy$")
-                Hyprland.dispatch("movewindowpixel exact 0 0,title:^molten-glass-dummy$")
+                Hyprland.dispatch("movewindowpixel exact -10 -10,title:^molten-glass-dummy$")
             }
         }
         
