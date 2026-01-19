@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../../globals" as Root
 import "../../globals"
+import "../../services"
 import "../effects"
 import "../behavior"
 
@@ -12,7 +13,7 @@ Item {
 
     property string currentView: "default"
     property bool isExpanded: currentView !== "default"
-    property bool screenNotchOpen: isExpanded
+    property bool screenNotchOpen: isExpanded || volumeOverlayActive
 
     // Discrete mode: bar shrinks to a minimal notch showing only time and notification
     property bool discreteMode: false
@@ -20,6 +21,39 @@ Item {
     
     // Auto-hide state (controlled by parent) - slides bar down when hiding
     property bool showBar: true
+    
+    // ═══════════════════════════════════════════════════════════════
+    // VOLUME OVERLAY - GNOME-style volume feedback
+    // ═══════════════════════════════════════════════════════════════
+    property bool volumeOverlayActive: false
+    property bool wasDiscreteBeforeVolume: false  // Store previous discrete state
+    property string previousBarState: ""  // Store previous bar state for shell
+    
+    // Signal to tell parent to switch to floating mode
+    signal volumeOverlayStateChanged(bool active)
+    
+    // Function to show volume overlay (called externally when volume changes via scroll)
+    function showVolumeOverlay() {
+        if (!volumeOverlayActive) {
+            wasDiscreteBeforeVolume = discreteMode
+        }
+        volumeOverlayActive = true
+        volumeHideTimer.restart()
+    }
+    
+    // Timer to hide volume overlay after 2 seconds of no activity
+    Timer {
+        id: volumeHideTimer
+        interval: 2000
+        onTriggered: {
+            volumeOverlayActive = false
+        }
+    }
+    
+    // Emit state change signal when volume overlay state changes
+    onVolumeOverlayActiveChanged: {
+        volumeOverlayStateChanged(volumeOverlayActive)
+    }
     
     // Y position for glass backdrop sync - use binding to always match transform
     property real yPosition: slideTransform.y
@@ -49,9 +83,12 @@ Item {
     readonly property int discreteWidth: 110
     readonly property int discreteHeight: 24
     readonly property int normalHeight: 44
+    // Volume overlay dimensions
+    readonly property int volumeOverlayWidth: 280
+    readonly property int volumeOverlayHeight: 44
     
     // Discrete mode uses flat bottom (attached to screen edge)
-    property bool discreteFlatBottom: discreteMode && !screenNotchOpen
+    property bool discreteFlatBottom: discreteMode && !screenNotchOpen && !volumeOverlayActive
     
     // Adaptive colors based on background
     AdaptiveColors {
@@ -82,8 +119,11 @@ Item {
 
     // CRITICAL: Ambxst animates implicitWidth/Height on the ROOT Item
     // In discrete mode, shrink to minimal notch; otherwise use normal sizes
+    // Volume overlay takes priority over discrete mode
     implicitWidth: {
-        if (discreteMode && !screenNotchOpen) {
+        if (volumeOverlayActive && currentView === "default") {
+            return volumeOverlayWidth
+        } else if (discreteMode && !screenNotchOpen) {
             return discreteWidth
         } else if (screenNotchOpen) {
             return Math.max(stackContainer.width + 32 + animationTrigger * 0, 290)
@@ -92,7 +132,9 @@ Item {
         }
     }
     implicitHeight: {
-        if (discreteMode && !screenNotchOpen) {
+        if (volumeOverlayActive && currentView === "default") {
+            return volumeOverlayHeight
+        } else if (discreteMode && !screenNotchOpen) {
             return discreteHeight
         } else if (screenNotchOpen) {
             return Math.max(stackContainer.height + 32 + animationTrigger * 0, 44)
@@ -195,16 +237,125 @@ Item {
     Component {
         id: defaultViewComponent
         Item {
-            implicitWidth: discreteMode ? discreteRow.implicitWidth : defaultRow.implicitWidth
-            implicitHeight: discreteMode ? 20 : 36
+            implicitWidth: {
+                if (volumeOverlayActive) return volumeOverlayRow.implicitWidth
+                if (discreteMode) return discreteRow.implicitWidth
+                return defaultRow.implicitWidth
+            }
+            implicitHeight: {
+                if (volumeOverlayActive) return 36
+                if (discreteMode) return 20
+                return 36
+            }
 
-            // Full default row (visible when not in discrete mode)
+            // ═══════════════════════════════════════════════════════════════
+            // VOLUME OVERLAY ROW - Shows when volume is being adjusted
+            // ═══════════════════════════════════════════════════════════════
+            RowLayout {
+                id: volumeOverlayRow
+                anchors.centerIn: parent
+                spacing: 12
+                visible: volumeOverlayActive
+                opacity: volumeOverlayActive ? 1 : 0
+                
+                Behavior on opacity {
+                    NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
+                }
+                
+                // Volume icon
+                Text {
+                    id: volumeIcon
+                    text: {
+                        if (Audio.muted || Audio.volume === 0) return "🔇"
+                        if (Audio.volume < 0.33) return "🔉"
+                        if (Audio.volume < 0.66) return "🔊"
+                        return "🔊"
+                    }
+                    font.pixelSize: 18
+                    Layout.alignment: Qt.AlignVCenter
+                }
+                
+                // Volume slider bar
+                Item {
+                    Layout.preferredWidth: 180
+                    Layout.preferredHeight: 8
+                    Layout.alignment: Qt.AlignVCenter
+                    
+                    // Background track
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 4
+                        color: adaptiveColors.subtleTextColor
+                        opacity: 0.3
+                    }
+                    
+                    // Progress fill
+                    Rectangle {
+                        width: parent.width * Audio.volume
+                        height: parent.height
+                        radius: 4
+                        color: adaptiveColors.textColor
+                        
+                        Behavior on width {
+                            NumberAnimation { duration: 100; easing.type: Easing.OutQuad }
+                        }
+                    }
+                    
+                    // Make slider interactive
+                    MouseArea {
+                        anchors.fill: parent
+                        anchors.margins: -8
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        
+                        onPressed: (mouse) => {
+                            updateVolumeFromMouse(mouse)
+                        }
+                        
+                        onPositionChanged: (mouse) => {
+                            if (pressed) {
+                                updateVolumeFromMouse(mouse)
+                            }
+                        }
+                        
+                        function updateVolumeFromMouse(mouse) {
+                            var newVolume = Math.max(0, Math.min(1, (mouse.x - 8) / (width - 16)))
+                            Audio.setVolume(newVolume)
+                            volumeHideTimer.restart()
+                        }
+                        
+                        // Scroll wheel support on the slider too
+                        onWheel: (wheel) => {
+                            if (wheel.angleDelta.y > 0) {
+                                Audio.incrementVolume()
+                            } else {
+                                Audio.decrementVolume()
+                            }
+                            volumeHideTimer.restart()
+                        }
+                    }
+                }
+                
+                // Volume percentage
+                Text {
+                    text: Math.round(Audio.volume * 100) + "%"
+                    color: adaptiveColors.textColor
+                    font.pixelSize: 13
+                    font.weight: Font.Medium
+                    font.family: "monospace"
+                    Layout.preferredWidth: 40
+                    Layout.alignment: Qt.AlignVCenter
+                    horizontalAlignment: Text.AlignRight
+                }
+            }
+
+            // Full default row (visible when not in discrete mode and not volume overlay)
             RowLayout {
                 id: defaultRow
                 anchors.centerIn: parent
                 spacing: 10
-                visible: !discreteMode
-                opacity: discreteMode ? 0 : 1
+                visible: !discreteMode && !volumeOverlayActive
+                opacity: (discreteMode || volumeOverlayActive) ? 0 : 1
                 
                 Behavior on opacity {
                     NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
@@ -277,8 +428,8 @@ Item {
                 anchors.centerIn: parent
                 anchors.verticalCenterOffset: -1  // Slight offset since attached to bottom
                 spacing: 10
-                visible: discreteMode
-                opacity: discreteMode ? 1 : 0
+                visible: discreteMode && !volumeOverlayActive
+                opacity: (discreteMode && !volumeOverlayActive) ? 1 : 0
                 
                 Behavior on opacity {
                     NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }

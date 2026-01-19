@@ -1,13 +1,15 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import "../components"
+import Quickshell.Io
 import "../globals"
+import "../services"
+import "../components/effects"
 
 Item {
     id: root
     implicitWidth: 350
-    implicitHeight: 400
+    implicitHeight: contentColumn.implicitHeight + 32
 
     signal closeRequested()
 
@@ -18,11 +20,14 @@ Item {
     }
 
     Column {
+        id: contentColumn
         anchors.fill: parent
         anchors.margins: 16
         spacing: 16
 
-        // Quick toggles
+        // ═══════════════════════════════════════════════════════════════
+        // QUICK TOGGLES
+        // ═══════════════════════════════════════════════════════════════
         GridLayout {
             width: parent.width
             columns: 4
@@ -32,15 +37,27 @@ Item {
             Repeater {
                 model: [
                     { icon: "📶", label: "WiFi", prop: "wifiEnabled" },
-                    { icon: "🔵", label: "Bluetooth", prop: "bluetoothEnabled" },
+                    { icon: "🔷", label: "Bluetooth", prop: "bluetoothEnabled" },
                     { icon: "☕", label: "Caffeine", prop: "caffeineMode" },
                     { icon: "🎮", label: "Game Mode", prop: "gameMode" }
                 ]
 
-                Item {
-                    width: 70
-                    height: 70
-                    
+                delegate: Item {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 70
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 12
+                        color: State[modelData.prop] ? adaptiveColors.textColor : "transparent"
+                        opacity: State[modelData.prop] ? 0.15 : 0.08
+                        border.width: 1
+                        border.color: adaptiveColors.textColor
+                        
+                        Behavior on opacity {
+                            NumberAnimation { duration: 150 }
+                        }
+                    }
 
                     Column {
                         anchors.centerIn: parent
@@ -56,7 +73,12 @@ Item {
                             text: modelData.label
                             color: State[modelData.prop] ? adaptiveColors.textColor : adaptiveColors.subtleTextColor
                             font.pixelSize: 10
+                            font.weight: State[modelData.prop] ? Font.DemiBold : Font.Normal
                             anchors.horizontalCenter: parent.horizontalCenter
+                            
+                            Behavior on color {
+                                ColorAnimation { duration: 150 }
+                            }
                         }
                     }
 
@@ -69,10 +91,12 @@ Item {
             }
         }
 
-        // Brightness slider
+        // ═══════════════════════════════════════════════════════════════
+        // BRIGHTNESS SLIDER
+        // ═══════════════════════════════════════════════════════════════
         Column {
             width: parent.width
-            spacing: 8
+            spacing: 10
 
             RowLayout {
                 width: parent.width
@@ -85,169 +109,637 @@ Item {
                     text: "Brightness"
                     color: adaptiveColors.textColor
                     font.pixelSize: 13
+                    font.weight: Font.Medium
                     Layout.fillWidth: true
                 }
                 Text {
                     text: Math.round(State.brightness * 100) + "%"
                     color: adaptiveColors.subtleTextColor
                     font.pixelSize: 12
+                    font.family: "monospace"
                 }
             }
 
-            Slider {
+            // Custom slider
+            Item {
                 width: parent.width
-                from: 0.1
-                to: 1.0
-                value: State.brightness
-                onMoved: State.brightness = value
+                height: 24
 
-                background: Item {
-                    x: parent.leftPadding
-                    y: parent.topPadding + parent.availableHeight / 2 - 6 / 2
-                    width: parent.availableWidth
-                    height: 6
+                // Background track
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width
+                    height: 8
+                    radius: 4
+                    color: adaptiveColors.subtleTextColor
+                    opacity: 0.2
+                }
+
+                // Progress fill
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width * State.brightness
+                    height: 8
+                    radius: 4
+                    color: adaptiveColors.textColor
                     
-
-                    Rectangle {
-                        width: parent.parent.visualPosition * parent.width
-                        height: parent.height
-                        radius: 3
-                        color: adaptiveColors.textColor
-                        z: 1
+                    Behavior on width {
+                        NumberAnimation { duration: 50 }
                     }
                 }
 
-                handle: Rectangle {
-                    x: parent.leftPadding + parent.visualPosition * (parent.availableWidth - width)
-                    y: parent.topPadding + parent.availableHeight / 2 - height / 2
-                    width: 18
-                    height: 18
-                    radius: 9
+                // Handle
+                Rectangle {
+                    x: Math.max(0, Math.min(parent.width - width, parent.width * State.brightness - width / 2))
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 20
+                    height: 20
+                    radius: 10
                     color: adaptiveColors.textColor
+                    
+                    Behavior on x {
+                        NumberAnimation { duration: 50 }
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    cursorShape: Qt.PointingHandCursor
+                    
+                    onPressed: (mouse) => updateBrightness(mouse)
+                    onPositionChanged: (mouse) => {
+                        if (pressed) updateBrightness(mouse)
+                    }
+                    
+                    function updateBrightness(mouse) {
+                        var newVal = Math.max(0.1, Math.min(1, (mouse.x + 4) / (width - 8)))
+                        State.brightness = newVal
+                        brightnessProc.command = ["brightnessctl", "set", Math.round(newVal * 100) + "%"]
+                        brightnessProc.running = true
+                    }
                 }
             }
         }
 
-        // Volume slider
+        // ═══════════════════════════════════════════════════════════════
+        // VOLUME SLIDER (Using Audio Service)
+        // ═══════════════════════════════════════════════════════════════
         Column {
             width: parent.width
-            spacing: 8
+            spacing: 10
 
             RowLayout {
                 width: parent.width
 
                 Text {
+                    id: volumeIconText
                     text: {
-                        if (State.volume === 0) return "🔇"
-                        if (State.volume < 0.5) return "🔉"
+                        if (Audio.muted || Audio.volume === 0) return "🔇"
+                        if (Audio.volume < 0.33) return "🔉"
+                        if (Audio.volume < 0.66) return "🔊"
                         return "🔊"
                     }
                     font.pixelSize: 16
+                    
+                    MouseArea {
+                        anchors.fill: parent
+                        anchors.margins: -4
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Audio.toggleMute()
+                    }
                 }
                 Text {
                     text: "Volume"
                     color: adaptiveColors.textColor
                     font.pixelSize: 13
+                    font.weight: Font.Medium
                     Layout.fillWidth: true
                 }
                 Text {
-                    text: Math.round(State.volume * 100) + "%"
+                    text: Math.round(Audio.volume * 100) + "%"
                     color: adaptiveColors.subtleTextColor
                     font.pixelSize: 12
+                    font.family: "monospace"
                 }
             }
 
-            Slider {
+            // Custom slider
+            Item {
                 width: parent.width
-                from: 0
-                to: 1.0
-                value: State.volume
-                onMoved: State.volume = value
+                height: 24
 
-                background: Item {
-                    x: parent.leftPadding
-                    y: parent.topPadding + parent.availableHeight / 2 - 6 / 2
-                    width: parent.availableWidth
-                    height: 6
+                // Background track
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width
+                    height: 8
+                    radius: 4
+                    color: adaptiveColors.subtleTextColor
+                    opacity: 0.2
+                }
+
+                // Progress fill
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width * Audio.volume
+                    height: 8
+                    radius: 4
+                    color: Audio.muted ? adaptiveColors.subtleTextColor : adaptiveColors.textColor
                     
-
-                    Rectangle {
-                        width: parent.parent.visualPosition * parent.width
-                        height: parent.height
-                        radius: 3
-                        color: adaptiveColors.textColor
-                        z: 1
+                    Behavior on width {
+                        NumberAnimation { duration: 50 }
                     }
                 }
 
-                handle: Rectangle {
-                    x: parent.leftPadding + parent.visualPosition * (parent.availableWidth - width)
-                    y: parent.topPadding + parent.availableHeight / 2 - height / 2
-                    width: 18
-                    height: 18
-                    radius: 9
+                // Handle
+                Rectangle {
+                    x: Math.max(0, Math.min(parent.width - width, parent.width * Audio.volume - width / 2))
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 20
+                    height: 20
+                    radius: 10
                     color: adaptiveColors.textColor
+                    
+                    Behavior on x {
+                        NumberAnimation { duration: 50 }
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    cursorShape: Qt.PointingHandCursor
+                    
+                    onPressed: (mouse) => updateVolume(mouse)
+                    onPositionChanged: (mouse) => {
+                        if (pressed) updateVolume(mouse)
+                    }
+                    
+                    // Scroll wheel support
+                    onWheel: (wheel) => {
+                        if (wheel.angleDelta.y > 0) {
+                            Audio.incrementVolume()
+                        } else {
+                            Audio.decrementVolume()
+                        }
+                    }
+                    
+                    function updateVolume(mouse) {
+                        var newVal = Math.max(0, Math.min(1, (mouse.x + 4) / (width - 8)))
+                        Audio.setVolume(newVal)
+                    }
                 }
             }
         }
 
-        // Output device
-        Item {
+        // ═══════════════════════════════════════════════════════════════
+        // QUICK TOOLS ROW
+        // ═══════════════════════════════════════════════════════════════
+        Row {
             width: parent.width
-            height: 50
+            spacing: 8
             
+            // Screenshot
+            ToolButton {
+                icon: "📷"
+                label: "Screenshot"
+                onClicked: {
+                    screenshotProc.running = true
+                    root.closeRequested()
+                }
+            }
             
-            RowLayout {
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 8
-                z: 1
-
-                Text {
-                    text: "🔈"
-                    font.pixelSize: 16
+            // Screen Record
+            ToolButton {
+                icon: "🔴"
+                label: "Record"
+                onClicked: {
+                    screenRecordProc.running = true
+                    root.closeRequested()
                 }
-                Text {
-                    text: "Built-in Speakers"
-                    color: adaptiveColors.textColor
-                    font.pixelSize: 12
-                    Layout.fillWidth: true
+            }
+            
+            // Color Picker
+            ToolButton {
+                icon: "🎨"
+                label: "Color"
+                onClicked: {
+                    colorPickerProc.running = true
+                    root.closeRequested()
                 }
-                Text {
-                    text: "▼"
-                    color: adaptiveColors.textColorSecondary
-                    font.pixelSize: 10
+            }
+            
+            // OCR
+            ToolButton {
+                icon: "📝"
+                label: "OCR"
+                onClicked: {
+                    ocrProc.running = true
+                    root.closeRequested()
                 }
             }
         }
 
-        // Input device
-        Item {
+        // ═══════════════════════════════════════════════════════════════
+        // OUTPUT DEVICE
+        // ═══════════════════════════════════════════════════════════════
+        Column {
             width: parent.width
-            height: 50
+            spacing: 0
             
-            RowLayout {
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 8
-                z: 1
-
-                Text {
-                    text: "🎤"
-                    font.pixelSize: 16
-                }
-                Text {
-                    text: "Built-in Microphone"
+            // Output device header (clickable to expand)
+            Item {
+                id: outputHeader
+                width: parent.width
+                height: 50
+                
+                property bool expanded: false
+                
+                Rectangle {
+                    anchors.fill: parent
+                    radius: outputHeader.expanded ? 0 : 10
+                    topLeftRadius: 10
+                    topRightRadius: 10
+                    bottomLeftRadius: outputHeader.expanded ? 0 : 10
+                    bottomRightRadius: outputHeader.expanded ? 0 : 10
                     color: adaptiveColors.textColor
-                    font.pixelSize: 12
-                    Layout.fillWidth: true
+                    opacity: outputMouse.containsMouse ? 0.1 : 0.06
+                    
+                    Behavior on opacity {
+                        NumberAnimation { duration: 100 }
+                    }
                 }
-                Text {
-                    text: "▼"
-                    color: adaptiveColors.textColorSecondary
-                    font.pixelSize: 10
+                
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+                    z: 1
+
+                    Text {
+                        text: "🔈"
+                        font.pixelSize: 16
+                    }
+                    Column {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: "Output"
+                            color: adaptiveColors.subtleTextColor
+                            font.pixelSize: 10
+                        }
+                        Text {
+                            text: Audio.friendlyDeviceName(Audio.sink)
+                            color: adaptiveColors.textColor
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                            width: parent.width
+                        }
+                    }
+                    Text {
+                        text: outputHeader.expanded ? "▲" : "▼"
+                        color: adaptiveColors.subtleTextColor
+                        font.pixelSize: 10
+                    }
+                }
+                
+                MouseArea {
+                    id: outputMouse
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    hoverEnabled: true
+                    onClicked: outputHeader.expanded = !outputHeader.expanded
+                }
+            }
+            
+            // Output device list (expandable)
+            Item {
+                width: parent.width
+                height: outputHeader.expanded ? outputDeviceList.implicitHeight : 0
+                clip: true
+                
+                Behavior on height {
+                    NumberAnimation { duration: 200; easing.type: Easing.OutQuart }
+                }
+                
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 10
+                    topLeftRadius: 0
+                    topRightRadius: 0
+                    color: adaptiveColors.textColor
+                    opacity: 0.04
+                }
+                
+                Column {
+                    id: outputDeviceList
+                    width: parent.width
+                    
+                    Repeater {
+                        model: Audio.outputDevices
+                        
+                        delegate: Item {
+                            required property var modelData
+                            width: parent.width
+                            height: 44
+                            
+                            property bool isSelected: Audio.sink === modelData
+                            
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 8
+                                anchors.topMargin: 2
+                                anchors.bottomMargin: 2
+                                radius: 8
+                                color: adaptiveColors.textColor
+                                opacity: outputDeviceMouse.containsMouse ? 0.1 : (isSelected ? 0.08 : 0)
+                                
+                                Behavior on opacity {
+                                    NumberAnimation { duration: 100 }
+                                }
+                            }
+                            
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 16
+                                anchors.rightMargin: 16
+                                spacing: 10
+
+                                Text {
+                                    text: "🔊"
+                                    font.pixelSize: 14
+                                    opacity: isSelected ? 1 : 0.6
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: Audio.friendlyDeviceName(modelData)
+                                    color: isSelected ? adaptiveColors.textColor : adaptiveColors.subtleTextColor
+                                    font.pixelSize: 12
+                                    font.weight: isSelected ? Font.Medium : Font.Normal
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    text: "✓"
+                                    color: adaptiveColors.textColor
+                                    font.pixelSize: 14
+                                    visible: isSelected
+                                }
+                            }
+                            
+                            MouseArea {
+                                id: outputDeviceMouse
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                hoverEnabled: true
+                                onClicked: {
+                                    Audio.setDefaultSink(modelData)
+                                    outputHeader.expanded = false
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+
+        // ═══════════════════════════════════════════════════════════════
+        // INPUT DEVICE
+        // ═══════════════════════════════════════════════════════════════
+        Column {
+            width: parent.width
+            spacing: 0
+            
+            // Input device header (clickable to expand)
+            Item {
+                id: inputHeader
+                width: parent.width
+                height: 50
+                
+                property bool expanded: false
+                
+                Rectangle {
+                    anchors.fill: parent
+                    radius: inputHeader.expanded ? 0 : 10
+                    topLeftRadius: 10
+                    topRightRadius: 10
+                    bottomLeftRadius: inputHeader.expanded ? 0 : 10
+                    bottomRightRadius: inputHeader.expanded ? 0 : 10
+                    color: adaptiveColors.textColor
+                    opacity: inputMouse.containsMouse ? 0.1 : 0.06
+                    
+                    Behavior on opacity {
+                        NumberAnimation { duration: 100 }
+                    }
+                }
+                
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+                    z: 1
+
+                    Text {
+                        text: "🎤"
+                        font.pixelSize: 16
+                    }
+                    Column {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: "Input"
+                            color: adaptiveColors.subtleTextColor
+                            font.pixelSize: 10
+                        }
+                        Text {
+                            text: Audio.friendlyDeviceName(Audio.source)
+                            color: adaptiveColors.textColor
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                            width: parent.width
+                        }
+                    }
+                    Text {
+                        text: inputHeader.expanded ? "▲" : "▼"
+                        color: adaptiveColors.subtleTextColor
+                        font.pixelSize: 10
+                    }
+                }
+                
+                MouseArea {
+                    id: inputMouse
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    hoverEnabled: true
+                    onClicked: inputHeader.expanded = !inputHeader.expanded
+                }
+            }
+            
+            // Input device list (expandable)
+            Item {
+                width: parent.width
+                height: inputHeader.expanded ? inputDeviceList.implicitHeight : 0
+                clip: true
+                
+                Behavior on height {
+                    NumberAnimation { duration: 200; easing.type: Easing.OutQuart }
+                }
+                
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 10
+                    topLeftRadius: 0
+                    topRightRadius: 0
+                    color: adaptiveColors.textColor
+                    opacity: 0.04
+                }
+                
+                Column {
+                    id: inputDeviceList
+                    width: parent.width
+                    
+                    Repeater {
+                        model: Audio.inputDevices
+                        
+                        delegate: Item {
+                            required property var modelData
+                            width: parent.width
+                            height: 44
+                            
+                            property bool isSelected: Audio.source === modelData
+                            
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 8
+                                anchors.topMargin: 2
+                                anchors.bottomMargin: 2
+                                radius: 8
+                                color: adaptiveColors.textColor
+                                opacity: inputDeviceMouse.containsMouse ? 0.1 : (isSelected ? 0.08 : 0)
+                                
+                                Behavior on opacity {
+                                    NumberAnimation { duration: 100 }
+                                }
+                            }
+                            
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 16
+                                anchors.rightMargin: 16
+                                spacing: 10
+
+                                Text {
+                                    text: "🎙️"
+                                    font.pixelSize: 14
+                                    opacity: isSelected ? 1 : 0.6
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: Audio.friendlyDeviceName(modelData)
+                                    color: isSelected ? adaptiveColors.textColor : adaptiveColors.subtleTextColor
+                                    font.pixelSize: 12
+                                    font.weight: isSelected ? Font.Medium : Font.Normal
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    text: "✓"
+                                    color: adaptiveColors.textColor
+                                    font.pixelSize: 14
+                                    visible: isSelected
+                                }
+                            }
+                            
+                            MouseArea {
+                                id: inputDeviceMouse
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                hoverEnabled: true
+                                onClicked: {
+                                    Audio.setDefaultSource(modelData)
+                                    inputHeader.expanded = false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // TOOL BUTTON COMPONENT
+    // ═══════════════════════════════════════════════════════════════
+    component ToolButton: Item {
+        property string icon
+        property string label
+        signal clicked()
+        
+        width: (parent.width - 24) / 4
+        height: 60
+        
+        Rectangle {
+            anchors.fill: parent
+            radius: 10
+            color: adaptiveColors.textColor
+            opacity: toolMouse.containsMouse ? 0.12 : 0.06
+            
+            Behavior on opacity {
+                NumberAnimation { duration: 100 }
+            }
+        }
+        
+        Column {
+            anchors.centerIn: parent
+            spacing: 4
+            
+            Text {
+                text: icon
+                font.pixelSize: 20
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+            Text {
+                text: label
+                color: adaptiveColors.textColor
+                font.pixelSize: 10
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+        }
+        
+        MouseArea {
+            id: toolMouse
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            hoverEnabled: true
+            onClicked: parent.clicked()
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // PROCESSES
+    // ═══════════════════════════════════════════════════════════════
+    Process {
+        id: brightnessProc
+    }
+    
+    Process {
+        id: screenshotProc
+        command: ["bash", "-c", "grimblast --notify copy area"]
+    }
+    
+    Process {
+        id: screenRecordProc
+        command: ["bash", "-c", "wf-recorder -g \"$(slurp)\" -f ~/Videos/recording-$(date +%Y%m%d-%H%M%S).mp4"]
+    }
+    
+    Process {
+        id: colorPickerProc
+        command: ["bash", "-c", "hyprpicker -a"]
+    }
+    
+    Process {
+        id: ocrProc
+        command: ["bash", "-c", "grim -g \"$(slurp)\" - | tesseract stdin stdout | wl-copy && notify-send 'OCR' 'Text copied to clipboard'"]
     }
 }

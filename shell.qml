@@ -326,6 +326,26 @@ ShellRoot {
                     root.currentScreen = "none"
                 }
                 
+                // Volume overlay state change - switch to floating when active
+                onVolumeOverlayStateChanged: (active) => {
+                    if (active) {
+                        // Store the current state before switching
+                        mainBarContent.previousBarState = mainBarWindow.barState
+                        // Switch to floating to show the volume overlay properly
+                        mainBarWindow.barState = "floating"
+                        mainBarDiscreteTimer.stop()
+                    } else {
+                        // Return to previous state after volume overlay hides
+                        if (mainBarContent.previousBarState === "discrete" && mainBarWindow.shouldBeDiscrete) {
+                            mainBarWindow.barState = "discrete"
+                        } else if (mainBarContent.previousBarState === "hidden" && mainBarWindow.shouldBeDiscrete) {
+                            mainBarWindow.barState = "discrete"
+                        }
+                        // Otherwise stay floating (or let the normal state machine handle it)
+                        mainBarDiscreteTimer.restart()
+                    }
+                }
+                
                 // Simple state machine
                 onBarHoverChanged: (hovering) => {
                     mainBarWindow.barIsHovered = hovering
@@ -338,8 +358,8 @@ ShellRoot {
                         }
                         // Floating + hover → stay floating
                     } else {
-                        // Floating + leave → start timer to go discrete
-                        if (mainBarWindow.barState === "floating") {
+                        // Floating + leave → start timer to go discrete (but not if volume overlay is active)
+                        if (mainBarWindow.barState === "floating" && !mainBarContent.volumeOverlayActive) {
                             mainBarDiscreteTimer.restart()
                         }
                         // Hidden state is handled by discreteHoverZone
@@ -440,6 +460,8 @@ ShellRoot {
             hoverEnabled: true
             propagateComposedEvents: true
             onPressed: (mouse) => mouse.accepted = false
+            // Pass wheel events through to children
+            onWheel: (wheel) => wheel.accepted = false
             
             anchors.left: parent.left
             anchors.bottom: parent.bottom
@@ -537,6 +559,8 @@ ShellRoot {
             hoverEnabled: true
             propagateComposedEvents: true
             onPressed: (mouse) => mouse.accepted = false
+            // Pass wheel events through to children
+            onWheel: (wheel) => wheel.accepted = false
             
             anchors.right: parent.right
             anchors.bottom: parent.bottom
@@ -579,6 +603,10 @@ ShellRoot {
                 } else {
                     statusHideTimer.restart()
                 }
+            }
+            // GNOME-like volume scroll - trigger MainBar volume overlay
+            onVolumeScrollChanged: {
+                mainBarContent.showVolumeOverlay()
             }
         }
     }

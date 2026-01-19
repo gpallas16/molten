@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Services.SystemTray
 import Quickshell.Widgets
 import "../../globals"
+import "../../services"
 import "../effects"
 import "../behavior"
 
@@ -16,12 +17,17 @@ Item {
     signal toolbarRequested()
     signal barHoverChanged(bool hovering)
     signal trayMenuActiveChanged(bool active)
+    signal volumeScrollChanged()  // Signal for volume scroll changes (GNOME-like)
     
     // Reference to the parent window for tray menus
     property var parentWindow: null
 
     // Auto-hide state (controlled by parent)
     property bool showBar: false
+    
+    // Volume control - use Audio service
+    property real currentVolume: Audio.volume
+    property bool volumeMuted: Audio.muted
     
     // Y position for glass backdrop sync - use binding to always match transform
     property real yPosition: slideTransform.y
@@ -165,7 +171,7 @@ Item {
             }
         }
 
-        // Quick status island
+        // Quick status island with GNOME-like scroll volume control
         Item {
             width: statusLayout.implicitWidth + 20
             height: 44
@@ -175,20 +181,45 @@ Item {
                 anchors.centerIn: parent
                 spacing: 6
 
-                // Volume indicator
+                // Volume indicator - scrollable like GNOME
                 Item {
+                    id: volumeIndicator
                     width: 28
                     height: 28
                     
                     Text {
                         anchors.centerIn: parent
                         text: {
-                            if (State.volume === 0) return "🔇"
-                            if (State.volume < 0.5) return "🔉"
+                            if (root.volumeMuted || root.currentVolume === 0) return "🔇"
+                            if (root.currentVolume < 0.33) return "🔉"
+                            if (root.currentVolume < 0.66) return "🔊"
                             return "🔊"
                         }
                         font.pixelSize: 15
                         color: adaptiveColors.iconColor
+                    }
+                    
+                    // Mouse area for scroll wheel volume control
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        
+                        // Click to toggle mute
+                        onClicked: Audio.toggleMute()
+                        
+                        // Scroll wheel to adjust volume (GNOME-like)
+                        onWheel: function(wheel) {
+                            if (wheel.angleDelta.y > 0) {
+                                Audio.incrementVolume()
+                            } else {
+                                Audio.decrementVolume()
+                            }
+                            
+                            // Emit signal to trigger MainBar volume overlay
+                            root.volumeScrollChanged()
+                        }
                     }
                 }
 
