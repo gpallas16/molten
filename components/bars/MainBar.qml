@@ -18,6 +18,26 @@ Item {
     property bool discreteMode: false
     property bool discreteModeEnabled: true  // Master toggle for discrete mode behavior
     
+    // Auto-hide state (controlled by parent) - slides bar down when hiding
+    property bool showBar: true
+    
+    // Y position for glass backdrop sync - use binding to always match transform
+    property real yPosition: slideTransform.y
+    
+    // Slide animation: translate Y when hiding (like WorkspaceBar and StatusBar)
+    transform: Translate {
+        id: slideTransform
+        y: showBar ? 0 : (notchContainer.implicitHeight + 20)
+        
+        Behavior on y {
+            NumberAnimation {
+                duration: 400
+                easing.type: showBar ? Easing.OutBack : Easing.InQuad
+                easing.overshoot: 1.2
+            }
+        }
+    }
+    
     // Signal for parent to detect hover on the bar
     signal barHoverChanged(bool hovering)
     signal closeRequested()

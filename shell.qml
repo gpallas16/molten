@@ -232,49 +232,58 @@ ShellRoot {
             id: mainBarRegionContainer
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            // Position based on state: discrete=docked, hidden=off-screen, floating=with margin
+            // Position based on state: discrete=docked, floating=with margin
+            // Hidden state is now handled by MainBar's showBar property with slide animation
             anchors.bottomMargin: {
-                if (mainBarWindow.barState === "hidden") return -mainBarContent.implicitHeight - 10
                 if (mainBarWindow.barState === "floating") return 6
-                return 0  // discrete - docked
+                return 0  // discrete - docked (hidden uses showBar: false)
             }
             width: mainBarContent.implicitWidth
             height: mainBarContent.implicitHeight
             
-            // Y position for glass backdrop sync
-            property real yPosition: mainBarWindow.barState === "hidden" ? (mainBarContent.implicitHeight + 10) : 0
-            
-            opacity: mainBarWindow.barState === "hidden" ? 0 : 1
+            // Y position for glass backdrop sync - use MainBar's transform position
+            property real yPosition: mainBarContent.yPosition
             
             Behavior on anchors.bottomMargin {
                 NumberAnimation { duration: 300; easing.type: Easing.OutQuart }
-            }
-            
-            Behavior on opacity {
-                NumberAnimation { duration: 200; easing.type: Easing.OutQuart }
             }
 
             MainBar {
                 id: mainBarContent
                 anchors.centerIn: parent
                 
-                // Discrete mode = docked state
-                discreteMode: mainBarWindow.barState === "discrete" && mainBarWindow.shouldBeDiscrete
+                // Discrete mode = docked or hidden state (keep discrete look while sliding down)
+                discreteMode: (mainBarWindow.barState === "discrete" || mainBarWindow.barState === "hidden") && mainBarWindow.shouldBeDiscrete
+                
+                // Slide down when hidden (like WorkspaceBar and StatusBar)
+                showBar: mainBarWindow.barState !== "hidden"
 
                 onCurrentViewChanged: {
                     root.currentScreen = currentView === "default" ? "none" : currentView
                 }
 
                 onIsExpandedChanged: {
-                    var radius = isExpanded ? Theme.containerRoundness : Theme.barRoundness
-                    Hyprland.dispatch("exec hyprctl setprop title:^molten-glass-notch$ rounding " + radius)
+                    updateGlassBackdropRounding()
                 }
                 
                 onDiscreteModeChanged: {
-                    if (!isExpanded) {
-                        var radius = discreteMode ? (discreteHeight / 2) : Theme.barRoundness
-                        Hyprland.dispatch("exec hyprctl setprop title:^molten-glass-notch$ rounding " + radius)
+                    updateGlassBackdropRounding()
+                }
+                
+                onDiscreteFlatBottomChanged: {
+                    updateGlassBackdropRounding()
+                }
+                
+                function updateGlassBackdropRounding() {
+                    var radius
+                    if (isExpanded) {
+                        radius = Theme.containerRoundness
+                    } else if (discreteMode) {
+                        radius = 12
+                    } else {
+                        radius = Theme.barRoundness
                     }
+                    Hyprland.dispatch("exec hyprctl setprop title:^molten-glass-notch$ rounding " + Math.round(radius))
                 }
 
                 onCloseRequested: {
@@ -605,9 +614,25 @@ ShellRoot {
         screenWidth: root.screenWidth
         screenHeight: root.screenHeight
         horizontalAlign: "center"
+        // Margin changes: 0 when docked (discrete), 6 when floating
+        margin: mainBarWindow.barState === "discrete" ? 0 : 6
         // Always visible - yOffset handles positioning off-screen when hidden
         backdropVisible: !root.isFullscreen
         yOffset: mainBarRegionContainer.yPosition  // Sync with slide animation
         startupDelay: 150
+        
+        // Sync discrete mode state from main bar
+        discreteMode: mainBarContent.discreteMode
+        targetRadius: {
+            if (mainBarContent.discreteMode && !mainBarContent.isExpanded) {
+                return 12  // Discrete notch roundness
+            } else if (mainBarContent.isExpanded) {
+                return Theme.containerRoundness
+            } else {
+                return Theme.barRoundness
+            }
+        }
+        // Flat bottom in discrete mode (attached to edge)
+        flatBottom: mainBarContent.discreteFlatBottom
     }
 }
