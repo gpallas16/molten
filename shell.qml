@@ -177,8 +177,8 @@ ShellRoot {
                     barState = "floating"
                 }
             } else {
-                // Has windows - go to discrete if not being hovered
-                if (barState === "floating" && !barIsHovered) {
+                // Has windows - go to discrete if not being hovered (and no popups active)
+                if (barState === "floating" && !barIsHovered && !mainBarContent.notificationPopupActive && !mainBarContent.volumeOverlayActive) {
                     barState = "discrete"
                 }
             }
@@ -189,6 +189,10 @@ ShellRoot {
             id: mainBarDiscreteTimer
             interval: 1000
             onTriggered: {
+                // Don't auto-hide if notification popup or volume overlay is active
+                if (mainBarContent.notificationPopupActive || mainBarContent.volumeOverlayActive) {
+                    return
+                }
                 if (mainBarWindow.barState === "floating" && !mainBarWindow.barIsHovered && mainBarWindow.shouldBeDiscrete) {
                     mainBarWindow.barState = "discrete"
                 }
@@ -239,8 +243,12 @@ ShellRoot {
                     if (containsMouse) {
                         // Mouse still in zone - stay hidden
                     } else {
-                        // Mouse left zone - show discrete
-                        mainBarWindow.barState = "discrete"
+                        // Mouse left zone - show discrete (unless popups active)
+                        if (!mainBarContent.notificationPopupActive && !mainBarContent.volumeOverlayActive) {
+                            mainBarWindow.barState = "discrete"
+                        } else {
+                            mainBarWindow.barState = "floating"
+                        }
                     }
                 }
             }
@@ -330,19 +338,51 @@ ShellRoot {
                 onVolumeOverlayStateChanged: (active) => {
                     if (active) {
                         // Store the current state before switching
-                        mainBarContent.previousBarState = mainBarWindow.barState
+                        if (mainBarContent.previousBarState === "") {
+                            mainBarContent.previousBarState = mainBarWindow.barState
+                        }
                         // Switch to floating to show the volume overlay properly
                         mainBarWindow.barState = "floating"
                         mainBarDiscreteTimer.stop()
                     } else {
-                        // Return to previous state after volume overlay hides
-                        if (mainBarContent.previousBarState === "discrete" && mainBarWindow.shouldBeDiscrete) {
-                            mainBarWindow.barState = "discrete"
-                        } else if (mainBarContent.previousBarState === "hidden" && mainBarWindow.shouldBeDiscrete) {
-                            mainBarWindow.barState = "discrete"
+                        // Only return to previous state if no other popups are active
+                        if (!mainBarContent.notificationPopupActive) {
+                            if (mainBarContent.previousBarState === "discrete" && mainBarWindow.shouldBeDiscrete) {
+                                mainBarWindow.barState = "discrete"
+                            } else if (mainBarContent.previousBarState === "hidden" && mainBarWindow.shouldBeDiscrete) {
+                                mainBarWindow.barState = "discrete"
+                            }
+                            mainBarContent.previousBarState = ""
+                            // Otherwise stay floating (or let the normal state machine handle it)
+                            mainBarDiscreteTimer.restart()
                         }
-                        // Otherwise stay floating (or let the normal state machine handle it)
-                        mainBarDiscreteTimer.restart()
+                        // If notification popup is active, stay floating
+                    }
+                }
+                
+                // Notification popup state change - switch to floating when active
+                onNotificationPopupStateChanged: (active) => {
+                    if (active) {
+                        // Store the current state before switching
+                        if (mainBarContent.previousBarState === "") {
+                            mainBarContent.previousBarState = mainBarWindow.barState
+                        }
+                        // Switch to floating to show notifications properly
+                        mainBarWindow.barState = "floating"
+                        mainBarDiscreteTimer.stop()
+                    } else {
+                        // Only return to previous state if no other popups are active
+                        if (!mainBarContent.volumeOverlayActive) {
+                            if (mainBarContent.previousBarState === "discrete" && mainBarWindow.shouldBeDiscrete) {
+                                mainBarWindow.barState = "discrete"
+                            } else if (mainBarContent.previousBarState === "hidden" && mainBarWindow.shouldBeDiscrete) {
+                                mainBarWindow.barState = "discrete"
+                            }
+                            mainBarContent.previousBarState = ""
+                            // Restart the timer to allow normal state machine to work
+                            mainBarDiscreteTimer.restart()
+                        }
+                        // If volume overlay is active, stay floating
                     }
                 }
                 
@@ -358,8 +398,8 @@ ShellRoot {
                         }
                         // Floating + hover → stay floating
                     } else {
-                        // Floating + leave → start timer to go discrete (but not if volume overlay is active)
-                        if (mainBarWindow.barState === "floating" && !mainBarContent.volumeOverlayActive) {
+                        // Floating + leave → start timer to go discrete (but not if volume/notification overlay is active)
+                        if (mainBarWindow.barState === "floating" && !mainBarContent.volumeOverlayActive && !mainBarContent.notificationPopupActive) {
                             mainBarDiscreteTimer.restart()
                         }
                         // Hidden state is handled by discreteHoverZone
@@ -688,9 +728,9 @@ ShellRoot {
         // Sync discrete mode state from main bar
         discreteMode: mainBarContent.discreteMode
         targetRadius: {
-            if (mainBarContent.discreteMode && !mainBarContent.isExpanded) {
+            if (mainBarContent.discreteMode && !mainBarContent.screenNotchOpen) {
                 return 12  // Discrete notch roundness
-            } else if (mainBarContent.isExpanded) {
+            } else if (mainBarContent.screenNotchOpen) {
                 return Theme.containerRoundness
             } else {
                 return Theme.barRoundness

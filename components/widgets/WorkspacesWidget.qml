@@ -1,11 +1,13 @@
 import QtQuick
 import QtQuick.Controls
+import Quickshell
 import Quickshell.Hyprland
 import "../../globals" as Root
 import "../../globals"
+import "../../services"
 
 // ═══════════════════════════════════════════════════════════════════
-// Workspaces Widget - Ambxst Style
+// Workspaces Widget - Ambxst Style with App Icons
 // ═══════════════════════════════════════════════════════════════════
 Item {
     id: wsWidget
@@ -19,16 +21,21 @@ Item {
     property color textColor: Qt.rgba(1, 1, 1, 1)
     property color occupiedColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.8)
     property color emptyColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.3)
+    
+    // App icon configuration
+    property bool showAppIcons: true
+    property real iconSize: buttonSize * 0.65
 
     // State
     property int activeIndex: (Root.State.activeWorkspace - 1) % workspaceCount
     property var occupiedList: []
+    property var focusedWindows: []  // Stores focused window per workspace
 
     // Size
     implicitWidth: buttonSize * workspaceCount + padding * 2
     implicitHeight: buttonSize + padding * 2
 
-    // Update occupied workspaces
+    // Update occupied workspaces and focused windows
     Timer {
         interval: 100
         running: true
@@ -37,11 +44,15 @@ Item {
     }
 
     function updateOccupied() {
-        var newList = []
+        var newOccupiedList = []
+        var newFocusedWindows = []
         for (var i = 0; i < workspaceCount; i++) {
-            newList.push(Root.State.isWorkspaceOccupied(i + 1))
+            var wsId = i + 1
+            newOccupiedList.push(Root.State.isWorkspaceOccupied(wsId))
+            newFocusedWindows.push(Root.State.getFocusedWindowForWorkspace(wsId))
         }
-        occupiedList = newList
+        occupiedList = newOccupiedList
+        focusedWindows = newFocusedWindows
     }
 
     Component.onCompleted: updateOccupied()
@@ -143,12 +154,35 @@ Item {
                 }
 
                 contentItem: Item {
-                    // Workspace dot
+                    // App icon (shown when workspace has a focused window)
+                    Image {
+                        id: appIcon
+                        anchors.centerIn: parent
+                        width: wsWidget.iconSize
+                        height: wsWidget.iconSize
+                        source: {
+                            if (!wsWidget.showAppIcons) return ""
+                            var focusedWin = wsWidget.focusedWindows[index]
+                            if (!focusedWin) return ""
+                            var iconName = AppSearch.getCachedIcon(focusedWin.class)
+                            return Quickshell.iconPath(iconName, "image-missing")
+                        }
+                        visible: source !== "" && status === Image.Ready
+                        sourceSize: Qt.size(wsWidget.iconSize, wsWidget.iconSize)
+                        smooth: true
+                        
+                        Behavior on opacity {
+                            NumberAnimation { duration: 150 }
+                        }
+                    }
+                    
+                    // Workspace dot (shown when no app icon or as fallback)
                     Rectangle {
                         anchors.centerIn: parent
                         width: 6
                         height: 6
                         radius: 3
+                        visible: !appIcon.visible
                         color: {
                             if (wsButton.isActive) return wsWidget.accentColor
                             if (wsButton.isOccupied) return wsWidget.occupiedColor

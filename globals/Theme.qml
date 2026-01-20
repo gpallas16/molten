@@ -14,7 +14,7 @@ QtObject {
 
     // Roundness values
     readonly property int barRoundness: 22
-    readonly property int containerRoundness: 64
+    readonly property int containerRoundness: 56
 
     // ═══════════════════════════════════════════════════════════════
     // LIGHT THEME

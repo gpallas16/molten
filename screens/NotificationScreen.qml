@@ -2,6 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 import "../components"
 import "../globals"
+import "../services"
+import "../services/notification_utils.js" as NotificationUtils
 
 Item {
     id: root
@@ -45,7 +47,7 @@ Item {
                     z: 1
 
                     Text {
-                        text: State.doNotDisturb ? "🔕" : "🔔"
+                        text: Notifications.doNotDisturb ? "🔕" : "🔔"
                         font.pixelSize: 14
                     }
                     Text {
@@ -58,7 +60,7 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: State.doNotDisturb = !State.doNotDisturb
+                    onClicked: Notifications.doNotDisturb = !Notifications.doNotDisturb
                 }
             }
 
@@ -66,7 +68,7 @@ Item {
             Item {
                 width: 32
                 height: 32
-                visible: State.notifications.length > 0
+                visible: Notifications.list.length > 0
                 
          
                 Text {
@@ -81,7 +83,7 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: State.clearNotifications()
+                    onClicked: Notifications.discardAllNotifications()
                 }
             }
         }
@@ -103,7 +105,7 @@ Item {
                 Item {
                     width: parent.width
                     height: 200
-                    visible: State.notifications.length === 0
+                    visible: Notifications.list.length === 0
 
                     Column {
                         anchors.centerIn: parent
@@ -123,13 +125,16 @@ Item {
                     }
                 }
 
-                // Notifications
+                // Notifications - using service list sorted by time descending
                 Repeater {
-                    model: State.notifications
+                    model: Notifications.list.slice().sort((a, b) => b.time - a.time)
 
                     Item {
+                        id: notifItem
                         width: parent.width
                         height: notifContent.implicitHeight + 24
+                        
+                        property var notification: modelData
                         
                         RowLayout {
                             id: notifContent
@@ -138,16 +143,33 @@ Item {
                             spacing: 12
                             z: 1
 
+                            // App icon
                             Item {
                                 width: 40
                                 height: 40
                                 
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: 8
+                                    color: adaptiveColors.subtleTextColor
+                                    opacity: 0.15
+                                    visible: !notifAppIcon.visible
+                                }
+                                
+                                Image {
+                                    id: notifAppIcon
+                                    anchors.fill: parent
+                                    source: notification && notification.appIcon ? "image://icon/" + notification.appIcon : ""
+                                    fillMode: Image.PreserveAspectFit
+                                    visible: status === Image.Ready
+                                }
                            
                                 Text {
                                     anchors.centerIn: parent
                                     text: "📬"
                                     font.pixelSize: 20
                                     z: 1
+                                    visible: !notifAppIcon.visible
                                 }
                             }
 
@@ -159,7 +181,7 @@ Item {
                                     width: parent.width
 
                                     Text {
-                                        text: modelData.summary || "Notification"
+                                        text: notification ? notification.summary : "Notification"
                                         color: adaptiveColors.textColor
                                         font.pixelSize: 13
                                         font.weight: Font.Medium
@@ -168,23 +190,22 @@ Item {
                                     }
 
                                     Text {
-                                        text: {
-                                            var now = new Date()
-                                            var diff = now - modelData.timestamp
-                                            var mins = Math.floor(diff / 60000)
-                                            if (mins < 1) return "now"
-                                            if (mins < 60) return mins + "m"
-                                            var hours = Math.floor(mins / 60)
-                                            if (hours < 24) return hours + "h"
-                                            return Math.floor(hours / 24) + "d"
-                                        }
+                                        text: notification ? NotificationUtils.getFriendlyNotifTimeString(notification.time) : ""
                                         color: adaptiveColors.textColorSecondary
                                         font.pixelSize: 10
                                     }
                                 }
+                                
+                                // App name
+                                Text {
+                                    text: notification && notification.appName ? notification.appName : ""
+                                    color: adaptiveColors.subtleTextColor
+                                    font.pixelSize: 10
+                                    visible: text !== ""
+                                }
 
                                 Text {
-                                    text: modelData.body || ""
+                                    text: notification ? NotificationUtils.processNotificationBody(notification.body, notification.appName) : ""
                                     color: adaptiveColors.textColorSecondary
                                     font.pixelSize: 12
                                     width: parent.width
@@ -192,17 +213,76 @@ Item {
                                     maximumLineCount: 3
                                     elide: Text.ElideRight
                                 }
+                                
+                                // Action buttons
+                                RowLayout {
+                                    width: parent.width
+                                    spacing: 8
+                                    visible: notification && notification.actions && notification.actions.length > 0 && !notification.isCached
+                                    
+                                    Repeater {
+                                        model: notification && notification.actions ? notification.actions : []
+                                        
+                                        Rectangle {
+                                            Layout.preferredHeight: 28
+                                            Layout.fillWidth: true
+                                            radius: 6
+                                            color: actionArea.containsMouse ? adaptiveColors.hover : "transparent"
+                                            border.width: 1
+                                            border.color: adaptiveColors.subtleTextColor
+                                            
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: modelData.text
+                                                color: adaptiveColors.textColor
+                                                font.pixelSize: 11
+                                                font.weight: Font.Medium
+                                            }
+                                            
+                                            MouseArea {
+                                                id: actionArea
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: {
+                                                    if (notification) {
+                                                        Notifications.attemptInvokeAction(notification.id, modelData.identifier, true)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
-                            Text {
-                                text: "✕"
-                                color: adaptiveColors.textColorSecondary
-                                font.pixelSize: 14
+                            // Dismiss button
+                            Item {
+                                width: 24
+                                height: 24
+                                Layout.alignment: Qt.AlignTop
+                                
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✕"
+                                    color: dismissArea.containsMouse ? adaptiveColors.textColor : adaptiveColors.textColorSecondary
+                                    font.pixelSize: 14
+                                    
+                                    Behavior on color {
+                                        ColorAnimation { duration: 150 }
+                                    }
+                                }
 
                                 MouseArea {
+                                    id: dismissArea
                                     anchors.fill: parent
+                                    anchors.margins: -4
+                                    hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: State.dismissNotification(modelData.id)
+                                    onClicked: {
+                                        if (notification) {
+                                            Notifications.discardNotification(notification.id)
+                                        }
+                                    }
                                 }
                             }
                         }

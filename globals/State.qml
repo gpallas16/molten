@@ -9,6 +9,64 @@ Singleton {
     id: root
 
     // ═══════════════════════════════════════════════════════════════
+    // WINDOW LIST TRACKING (for workspace app icons)
+    // ═══════════════════════════════════════════════════════════════
+    
+    property var windowList: []
+    property var windowByAddress: ({})
+    
+    function updateWindowList() {
+        getClientsProc.running = true
+    }
+    
+    // Get focused window for a specific workspace
+    function getFocusedWindowForWorkspace(wsId) {
+        const windowsInWorkspace = windowList.filter(w => w.workspace && w.workspace.id === wsId)
+        if (windowsInWorkspace.length === 0) return null
+        
+        // Get the window with the lowest focusHistoryID (most recently focused)
+        return windowsInWorkspace.reduce((best, win) => {
+            const bestFocus = best?.focusHistoryID ?? Infinity
+            const winFocus = win?.focusHistoryID ?? Infinity
+            return winFocus < bestFocus ? win : best
+        }, null)
+    }
+    
+    Process {
+        id: getClientsProc
+        command: ["bash", "-c", "hyprctl clients -j | jq -c"]
+        stdout: SplitParser {
+            onRead: (data) => {
+                try {
+                    root.windowList = JSON.parse(data)
+                    let tempWinByAddress = {}
+                    for (var i = 0; i < root.windowList.length; ++i) {
+                        var win = root.windowList[i]
+                        tempWinByAddress[win.address] = win
+                    }
+                    root.windowByAddress = tempWinByAddress
+                } catch (e) {
+                    console.log("Failed to parse window list:", e)
+                }
+            }
+        }
+    }
+    
+    // Update window list on Hyprland events
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) {
+            // Skip events that don't affect window list
+            if (["activewindow", "focusedmon", "monitoradded", 
+                 "createworkspace", "destroyworkspace", "moveworkspace", 
+                 "activespecial", "windowtitle"].includes(event.name)) return
+            updateWindowList()
+        }
+    }
+    
+    Component.onCompleted: updateWindowList()
+
+    // ═══════════════════════════════════════════════════════════════
     // HYPRLAND NATIVE INTEGRATION
     // ═══════════════════════════════════════════════════════════════
 
@@ -85,9 +143,12 @@ Singleton {
     property string mediaTitle: ""
     property string mediaArtist: ""
 
-    // Notifications
-    property var notifications: []
-    property bool doNotDisturb: false
+    // Notifications - now delegated to Notifications service
+    // Keep these for backward compatibility but they're deprecated
+    property alias notifications: root._notificationsDeprecated
+    property var _notificationsDeprecated: []
+    property alias doNotDisturb: root._dndDeprecated
+    property bool _dndDeprecated: false
 
     // System
     property real volume: 0.5
@@ -109,7 +170,6 @@ Singleton {
     // ═══════════════════════════════════════════════════════════════
     // HYPRLAND DISPATCH FUNCTIONS
     // ═══════════════════════════════════════════════════════════════
-
     function switchWorkspace(num) {
         Hyprland.dispatch("workspace " + num)
     }
@@ -126,34 +186,17 @@ Singleton {
         Hyprland.dispatch("overview:toggle")
     }
 
+    // Deprecated notification functions - use Notifications service directly
     function addNotification(summary, body, icon, urgency) {
-        if (doNotDisturb && urgency < 2) return
-        
-        var newNotif = {
-            id: Date.now(),
-            summary: summary,
-            body: body,
-            icon: icon,
-            urgency: urgency,
-            timestamp: new Date()
-        }
-        
-        var newList = notifications.slice()
-        newList.unshift(newNotif)
-        
-        if (newList.length > 50) {
-            newList.pop()
-        }
-        
-        notifications = newList
+        console.warn("State.addNotification is deprecated. Notifications are now handled by the Notifications service.")
     }
 
     function clearNotifications() {
-        notifications = []
+        console.warn("State.clearNotifications is deprecated. Use Notifications.discardAllNotifications() instead.")
     }
 
     function dismissNotification(id) {
-        notifications = notifications.filter(function(n) { return n.id !== id })
+        console.warn("State.dismissNotification is deprecated. Use Notifications.discardNotification(id) instead.")
     }
 
     // Media controls

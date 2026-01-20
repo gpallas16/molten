@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import "../../globals" as Root
 import "../../globals"
 import "../../services"
+import "../../services/notification_utils.js" as NotificationUtils
 import "../effects"
 import "../behavior"
 
@@ -13,7 +14,7 @@ Item {
 
     property string currentView: "default"
     property bool isExpanded: currentView !== "default"
-    property bool screenNotchOpen: isExpanded || volumeOverlayActive
+    property bool screenNotchOpen: isExpanded || volumeOverlayActive || notificationPopupActive
 
     // Discrete mode: bar shrinks to a minimal notch showing only time and notification
     property bool discreteMode: false
@@ -21,6 +22,26 @@ Item {
     
     // Auto-hide state (controlled by parent) - slides bar down when hiding
     property bool showBar: true
+    
+    // ═══════════════════════════════════════════════════════════════
+    // NOTIFICATION POPUP - Shows when new notification arrives
+    // ═══════════════════════════════════════════════════════════════
+    property bool notificationPopupActive: Notifications.popupList.length > 0
+    property var currentPopupNotifications: Notifications.popupList
+    
+    // Pause timers when hovering over notification popup
+    function pauseNotificationTimers() {
+        Notifications.pauseAllTimers()
+    }
+    
+    function resumeNotificationTimers() {
+        Notifications.resumeAllTimers()
+    }
+    
+    // Dismiss a popup notification
+    function dismissPopupNotification(id) {
+        Notifications.discardNotification(id)
+    }
     
     // ═══════════════════════════════════════════════════════════════
     // VOLUME OVERLAY - GNOME-style volume feedback
@@ -31,6 +52,12 @@ Item {
     
     // Signal to tell parent to switch to floating mode
     signal volumeOverlayStateChanged(bool active)
+    signal notificationPopupStateChanged(bool active)
+    
+    // Emit state change signal when notification popup state changes
+    onNotificationPopupActiveChanged: {
+        notificationPopupStateChanged(notificationPopupActive)
+    }
     
     // Function to show volume overlay (called externally when volume changes via scroll)
     function showVolumeOverlay() {
@@ -87,8 +114,13 @@ Item {
     readonly property int volumeOverlayWidth: 280
     readonly property int volumeOverlayHeight: 44
     
+    // Notification popup dimensions
+    readonly property int notificationPopupWidth: 380
+    readonly property int notificationPopupBaseHeight: 70
+    readonly property int notificationPopupMaxHeight: 400
+    
     // Discrete mode uses flat bottom (attached to screen edge)
-    property bool discreteFlatBottom: discreteMode && !screenNotchOpen && !volumeOverlayActive
+    property bool discreteFlatBottom: discreteMode && !screenNotchOpen && !volumeOverlayActive && !notificationPopupActive
     
     // Adaptive colors based on background
     AdaptiveColors {
@@ -119,9 +151,11 @@ Item {
 
     // CRITICAL: Ambxst animates implicitWidth/Height on the ROOT Item
     // In discrete mode, shrink to minimal notch; otherwise use normal sizes
-    // Volume overlay takes priority over discrete mode
+    // Volume overlay and notification popup take priority over discrete mode
     implicitWidth: {
-        if (volumeOverlayActive && currentView === "default") {
+        if (notificationPopupActive && currentView === "default") {
+            return notificationPopupWidth
+        } else if (volumeOverlayActive && currentView === "default") {
             return volumeOverlayWidth
         } else if (discreteMode && !screenNotchOpen) {
             return discreteWidth
@@ -132,7 +166,11 @@ Item {
         }
     }
     implicitHeight: {
-        if (volumeOverlayActive && currentView === "default") {
+        if (notificationPopupActive && currentView === "default") {
+            // Use actual content height from the stack view + padding
+            var contentHeight = stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitHeight : 0
+            return contentHeight + 24
+        } else if (volumeOverlayActive && currentView === "default") {
             return volumeOverlayHeight
         } else if (discreteMode && !screenNotchOpen) {
             return discreteHeight
@@ -238,15 +276,182 @@ Item {
         id: defaultViewComponent
         Item {
             implicitWidth: {
+                if (notificationPopupActive) return notificationPopupWidth - 32
                 if (volumeOverlayActive) return volumeOverlayRow.implicitWidth
                 if (discreteMode) return discreteRow.implicitWidth
                 return defaultRow.implicitWidth
             }
             implicitHeight: {
+                if (notificationPopupActive) return notificationPopupColumn.implicitHeight
                 if (volumeOverlayActive) return 36
                 if (discreteMode) return 20
                 return 36
             }
+
+            // ═══════════════════════════════════════════════════════════════
+            // NOTIFICATION POPUP - Shows when new notifications arrive
+            // ═══════════════════════════════════════════════════════════════
+            Column {
+                id: notificationPopupColumn
+                anchors.fill: parent
+                spacing: 16
+                visible: notificationPopupActive && !volumeOverlayActive
+                opacity: (notificationPopupActive && !volumeOverlayActive) ? 1 : 0
+                
+                Behavior on opacity {
+                    NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
+                }
+                
+                // Notification items (newest at top, stack downwards)
+                Repeater {
+                    model: currentPopupNotifications.slice(0, 10)  // Show max 10 notifications
+                    
+                    delegate: Item {
+                        id: notifItem
+                        width: notificationPopupColumn.width
+                        height: notifRow.implicitHeight + 16
+                        
+                        required property var modelData
+                        required property int index
+                        property var notification: modelData
+                        
+                    MouseArea {
+                        id: notifHoverArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        
+                        onEntered: pauseNotificationTimers()
+                        onExited: resumeNotificationTimers()
+                        onClicked: {
+                            // Open notification screen on click
+                            notchContainer.openView("notifications")
+                            Notifications.hideAllPopups()
+                        }
+                    }
+                    
+                    RowLayout {
+                        id: notifRow
+                        anchors.fill: parent
+                        anchors.margins: 16
+                        spacing: 10
+                        
+                        // App icon
+                        Item {
+                            Layout.preferredWidth: 36
+                            Layout.preferredHeight: 36
+                            Layout.alignment: Qt.AlignTop
+                            
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 8
+                                color: adaptiveColors.subtleTextColor
+                                opacity: 0.15
+                                visible: !appIconImage.visible
+                            }
+                            
+                            Image {
+                                id: appIconImage
+                                anchors.fill: parent
+                                source: notification && notification.appIcon ? "image://icon/" + notification.appIcon : ""
+                                fillMode: Image.PreserveAspectFit
+                                visible: status === Image.Ready
+                            }
+                            
+                            Text {
+                                anchors.centerIn: parent
+                                text: "📬"
+                                font.pixelSize: 18
+                                visible: !appIconImage.visible
+                            }
+                        }
+                        
+                        // Notification content
+                        Column {
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignVCenter
+                            spacing: 2
+                            
+                            // Header row: app name + time
+                            RowLayout {
+                                width: parent.width
+                                spacing: 4
+                                
+                                Text {
+                                    text: notification ? notification.summary : ""
+                                    color: adaptiveColors.textColor
+                                    font.pixelSize: 12
+                                    font.weight: Font.Bold
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    maximumLineCount: 1
+                                }
+                                
+                                Text {
+                                    text: notification ? NotificationUtils.getFriendlyNotifTimeString(notification.time) : ""
+                                    color: adaptiveColors.subtleTextColor
+                                    font.pixelSize: 10
+                                }
+                            }
+                            
+                            // Body
+                            Text {
+                                width: parent.width
+                                text: notification ? NotificationUtils.processNotificationBody(notification.body, notification.appName) : ""
+                                color: adaptiveColors.textColorSecondary
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                            }
+                        }
+                        
+                        // Dismiss button
+                        Item {
+                            Layout.preferredWidth: 20
+                            Layout.preferredHeight: 20
+                            Layout.alignment: Qt.AlignTop
+                            
+                            Text {
+                                anchors.centerIn: parent
+                                text: "✕"
+                                color: dismissArea.containsMouse ? adaptiveColors.textColor : adaptiveColors.subtleTextColor
+                                font.pixelSize: 12
+                                
+                                Behavior on color {
+                                    ColorAnimation { duration: 150 }
+                                }
+                            }
+                            
+                            MouseArea {
+                                id: dismissArea
+                                anchors.fill: parent
+                                anchors.margins: -4
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (notification) {
+                                        dismissPopupNotification(notification.id)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Entry animation
+                    Component.onCompleted: {
+                        notifItem.opacity = 0
+                        notifItem.scale = 0.8
+                        entryAnim.start()
+                    }
+                    
+                    ParallelAnimation {
+                        id: entryAnim
+                        NumberAnimation { target: notifItem; property: "opacity"; to: 1; duration: animDuration; easing.type: Easing.OutQuart }
+                        NumberAnimation { target: notifItem; property: "scale"; to: 1; duration: animDuration; easing.type: Easing.OutBack; easing.overshoot: 1.2 }
+                    }
+                }
+            }
+            }  // Close Column
 
             // ═══════════════════════════════════════════════════════════════
             // VOLUME OVERLAY ROW - Shows when volume is being adjusted
@@ -255,8 +460,8 @@ Item {
                 id: volumeOverlayRow
                 anchors.centerIn: parent
                 spacing: 12
-                visible: volumeOverlayActive
-                opacity: volumeOverlayActive ? 1 : 0
+                visible: volumeOverlayActive && !notificationPopupActive
+                opacity: (volumeOverlayActive && !notificationPopupActive) ? 1 : 0
                 
                 Behavior on opacity {
                     NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
@@ -349,13 +554,13 @@ Item {
                 }
             }
 
-            // Full default row (visible when not in discrete mode and not volume overlay)
+            // Full default row (visible when not in discrete mode and not volume overlay or notification popup)
             RowLayout {
                 id: defaultRow
                 anchors.centerIn: parent
                 spacing: 10
-                visible: !discreteMode && !volumeOverlayActive
-                opacity: (discreteMode || volumeOverlayActive) ? 0 : 1
+                visible: !discreteMode && !volumeOverlayActive && !notificationPopupActive
+                opacity: (discreteMode || volumeOverlayActive || notificationPopupActive) ? 0 : 1
                 
                 Behavior on opacity {
                     NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
@@ -402,17 +607,18 @@ Item {
                     
                     Text {
                         anchors.centerIn: parent
-                        text: Root.State.notifications ? Root.State.notifications.length.toString() : "0"
+                        text: Notifications.list.length > 0 ? Notifications.list.length.toString() : "0"
                         color: adaptiveColors.textColor
                         font.pixelSize: 11
                         font.weight: Font.DemiBold
                         z: 1
+                        visible: Notifications.list.length > 0
                     }
                     
                     Text {
                         anchors.centerIn: parent
                         text: "🔔"; font.pixelSize: 16
-                        visible: !Root.State.notifications || Root.State.notifications.length === 0
+                        visible: Notifications.list.length === 0
                     }
                     MouseArea {
                         anchors.fill: parent
@@ -428,8 +634,8 @@ Item {
                 anchors.centerIn: parent
                 anchors.verticalCenterOffset: -1  // Slight offset since attached to bottom
                 spacing: 10
-                visible: discreteMode && !volumeOverlayActive
-                opacity: (discreteMode && !volumeOverlayActive) ? 1 : 0
+                visible: discreteMode && !volumeOverlayActive && !notificationPopupActive
+                opacity: (discreteMode && !volumeOverlayActive && !notificationPopupActive) ? 1 : 0
                 
                 Behavior on opacity {
                     NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
@@ -459,8 +665,8 @@ Item {
                     Text {
                         anchors.centerIn: parent
                         anchors.verticalCenterOffset: -1
-                        text: Root.State.notifications && Root.State.notifications.length > 0 
-                              ? Root.State.notifications.length.toString() 
+                        text: Notifications.list.length > 0 
+                              ? Notifications.list.length.toString() 
                               : ""
                         color: adaptiveColors.textColor
                         font.pixelSize: 9
@@ -472,7 +678,7 @@ Item {
                         anchors.centerIn: parent
                         text: "🔔"
                         font.pixelSize: 13
-                        opacity: Root.State.notifications && Root.State.notifications.length > 0 ? 0.7 : 1.0
+                        opacity: Notifications.list.length > 0 ? 0.7 : 1.0
                     }
                 }
             }
