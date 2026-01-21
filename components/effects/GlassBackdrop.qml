@@ -20,8 +20,6 @@ FloatingWindow {
     property int margin: 6
     property int startupDelay: 50
     
-    onMarginChanged: if (windowReady) updatePosition()
-    
     // Y offset for animation (e.g., slide up/down)
     property real yOffset: 0
     

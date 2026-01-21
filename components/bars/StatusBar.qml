@@ -7,11 +7,12 @@ import "../../globals"
 import "../../services"
 import "../effects"
 import "../behavior"
+import "../transforms"
 
 Item {
     id: root
-    implicitWidth: mainRow.implicitWidth
-    implicitHeight: 44
+    implicitWidth: barTransform.animatedWidth
+    implicitHeight: barTransform.animatedHeight
 
     signal powerRequested()
     signal toolbarRequested()
@@ -22,36 +23,84 @@ Item {
     // Reference to the parent window for tray menus
     property var parentWindow: null
 
-    // Auto-hide state (controlled by parent)
-    property bool showBar: false
+    // ═══════════════════════════════════════════════════════════════
+    // BEHAVIOR MODE - Controls auto-hide behavior
+    // ═══════════════════════════════════════════════════════════════
+    
+    /**
+     * Behavior mode for the bar
+     * @type {string} "floating" | "hidden" | "dynamic"
+     * - floating: Always visible
+     * - hidden: Hidden until edge hit or hover
+     * - dynamic: Shows on hover/activity, auto-hides
+     */
+    property string mode: "dynamic"
+    
+    /** Whether there are active windows (affects dynamic mode) */
+    property bool hasActiveWindows: false
+    
+    /** Edge hit trigger (e.g., mouse at screen edge) */
+    property bool edgeHit: false
+    
+    // Internal hover tracking
+    property bool _realHover: false
+    property bool _trayMenuActive: false
+    
+    /**
+     * Temporarily show the bar (e.g., on activity/events)
+     * Shows for hideDelay duration before auto-hiding
+     */
+    function showTemporarily() {
+        behavior.showTemporarily()
+    }
+    
+    // Behavior controller
+    BarBehavior {
+        id: behavior
+        mode: root.mode
+        barHovered: root._realHover
+        edgeHit: root.edgeHit
+        popupActive: root._trayMenuActive
+        hasActiveWindows: root.hasActiveWindows
+    }
+    
+    // Computed visibility from behavior
+    readonly property bool showBar: behavior.barVisible
     
     // Volume control - use Audio service
     property real currentVolume: Audio.volume
     property bool volumeMuted: Audio.muted
     
-    // Y position for glass backdrop sync - use binding to always match transform
-    property real yPosition: slideTransform.y
-    
-    // Slide animation: translate Y when hiding
-    transform: Translate {
-        id: slideTransform
-        y: showBar ? 0 : (root.height + 20)
+    // Reusable transformation controller for slide and size animations
+    BarTransform {
+        id: barTransform
+        target: root
+        showBar: root.showBar
+        expanded: false
+        discreteMode: root.compactMode
+        contentWidth: mainRow.implicitWidth
+        contentHeight: 44
         
-        Behavior on y {
-            NumberAnimation {
-                duration: 400
-                easing.type: showBar ? Easing.OutBack : Easing.InQuad
-                easing.overshoot: 1.2
-            }
-        }
+        // Compact mode dimensions (just tray icons)
+        discreteWidth: trayLayout.implicitWidth + 24
+        discreteHeight: 24
+        normalHeight: 44
+        collapsedPadding: 0
     }
     
+    // Y position for glass backdrop sync - use binding to always match transform
+    property real yPosition: barTransform.slideY
+    
+    // Slide animation using BarTransform
+    transform: barTransform.slideTransform
+    
+    // Opacity follows showBar with matching duration
     opacity: showBar ? 1.0 : 0.0
     
     Behavior on opacity {
         NumberAnimation {
-            duration: showBar ? 300 : 200
-            easing.type: Easing.InOutQuad
+            duration: 400  // Match BarTransform.slideDuration
+            easing.type: showBar ? Easing.OutBack : Easing.InQuad
         }
     }
     
@@ -60,17 +109,13 @@ Item {
         id: adaptiveColors
         region: "right"
     }
-    
-    Behavior on opacity {
-        NumberAnimation {
-            duration: 200
-            easing.type: Easing.InOutQuad
-        }
-    }
 
     ShadowBorder {
-        radius: Theme.barRoundness
+        radius: barTransform.animatedRadius
     }
+    
+    // Whether we're in compact mode (minimal UI - just status indicators)
+    readonly property bool compactMode: behavior.isCompact
 
     property string activeTrayItem: "" // Track which tray icon is right-clicked
     
@@ -91,6 +136,7 @@ Item {
         onClosed: {
             // Menu closed - re-enable auto-hide
             root.activeTrayItem = ""
+            root._trayMenuActive = false
             root.trayMenuActiveChanged(false)
         }
     }
@@ -100,10 +146,10 @@ Item {
         anchors.centerIn: parent
         spacing: 8
 
+        // System tray - ALWAYS visible (in compact mode, this is the ONLY thing shown)
         Item {
             width: trayLayout.implicitWidth + 20
-            height: 44
-            // visible: SystemTray.items.length > 0
+            height: root.compactMode ? 24 : 44
 
             RowLayout {
                 id: trayLayout
@@ -130,6 +176,7 @@ Item {
                             } else if (mouse.button === Qt.RightButton) {
                                 if (modelData.hasMenu && root.parentWindow) {
                                     root.activeTrayItem = trayId
+                                    root._trayMenuActive = true
                                     root.trayMenuActiveChanged(true)
                                     // Use QsMenuAnchor to open the menu - this tracks when it closes
                                     trayMenuAnchor.menu = modelData.menu
@@ -171,10 +218,14 @@ Item {
             }
         }
 
-        // Quick status island with GNOME-like scroll volume control
+        // Quick status island with GNOME-like scroll volume control - hidden in compact mode
         Item {
             width: statusLayout.implicitWidth + 20
             height: 44
+            visible: !root.compactMode
+            opacity: root.compactMode ? 0 : 1
+            
+            Behavior on opacity { NumberAnimation { duration: 200 } }
 
             RowLayout {
                 id: statusLayout
@@ -262,10 +313,14 @@ Item {
         // Theme toggle island
         // (Theme toggle removed)
 
-        // Power island
+        // Power island - hidden in compact mode
         Item {
             width: 44
             height: 44
+            visible: !root.compactMode
+            opacity: root.compactMode ? 0 : 1
+            
+            Behavior on opacity { NumberAnimation { duration: 200 } }
 
 
             Text {
@@ -287,6 +342,9 @@ Item {
     
     // Hover detection for the entire bar
     BarHoverDetector {
-        onHoverChanged: (hovering) => root.barHoverChanged(hovering)
+        onHoverChanged: (hovering) => {
+            root._realHover = hovering
+            root.barHoverChanged(hovering)
+        }
     }
 }

@@ -7,128 +7,384 @@ import "../../services"
 import "../../services/notification_utils.js" as NotificationUtils
 import "../effects"
 import "../behavior"
+import "../transforms"
+import "../widgets"
 
-// Exact Ambxst animation structure
+/**
+ * MainBar - Dynamic Island style notch bar (presentational component)
+ * 
+ * A macOS Dynamic Island inspired notification bar that expands and contracts
+ * based on content and user interaction. This component is purely presentational -
+ * all behavior logic (visibility, mode switching) should be controlled by parent
+ * using BarBehavior.
+ * 
+ * Features:
+ * - Two display modes: floating (full UI) and compact (minimal notch)
+ * - Expandable screens: launcher, notifications, weather, toolbar, power
+ * - Volume overlay with GNOME-style feedback
+ * - Notification popup with auto-dismiss
+ * - Smooth animations using reusable transform components
+ * 
+ * @example
+ *   MainBar {
+ *       compactMode: barBehavior.isCompact  // Compact UI toggle
+ *       showBar: barBehavior.barVisible     // Controls slide animation
+ *       onBarHoverChanged: (h) => barBehavior.barHovered = h
+ *       onPopupActiveChanged: (a) => // handle popup state
+ *   }
+ * 
+ * @see BarBehavior - For behavior/state machine logic
+ * @see BarTransform - For dimension and slide calculations
+ * @see SizeAnimator - For animated size transitions
+ */
 Item {
     id: notchContainer
 
-    property string currentView: "default"
-    property bool isExpanded: currentView !== "default"
-    property bool screenNotchOpen: isExpanded || volumeOverlayActive || notificationPopupActive
-
-    // Discrete mode: bar shrinks to a minimal notch showing only time and notification
-    property bool discreteMode: false
-    property bool discreteModeEnabled: true  // Master toggle for discrete mode behavior
+    // ═══════════════════════════════════════════════════════════════
+    // PUBLIC API - Properties controlled by parent
+    // ═══════════════════════════════════════════════════════════════
     
-    // Auto-hide state (controlled by parent) - slides bar down when hiding
+    /**
+     * Compact mode - controlled by parent's BarBehavior.isCompact
+     * @type {bool}
+     * @default false
+     * 
+     * When true, bar shows minimal notch with just time and notification count.
+     * When false, bar shows full UI with weather, time, notifications.
+     * 
+     * Each bar type interprets compactMode differently:
+     * - MainBar: shrinks height to minimal notch
+     * - WorkspaceBar: hides launcher/overview buttons
+     * - StatusBar: hides tray/power button
+     */
+    property bool compactMode: false
+    
+    /**
+     * Controls bar visibility via slide animation
+     * @type {bool}
+     * @default true
+     * 
+     * When false, bar slides down off-screen. Used by BarBehavior
+     * to hide bar in "hidden" internal state.
+     */
     property bool showBar: true
     
     // ═══════════════════════════════════════════════════════════════
-    // NOTIFICATION POPUP - Shows when new notification arrives
+    // DERIVED STATE - Computed from compactMode
     // ═══════════════════════════════════════════════════════════════
+    
+    /** @deprecated Use compactMode directly - kept for compatibility */
+    readonly property bool discreteMode: compactMode
+    
+    /** True when not in compact mode - full bar appearance */
+    readonly property bool floatingMode: !compactMode
+    
+    // ═══════════════════════════════════════════════════════════════
+    // INTERNAL VIEW STATE - Screen navigation
+    // ═══════════════════════════════════════════════════════════════
+    
+    /**
+     * Currently displayed screen/view
+     * @type {string} "default" | "launcher" | "live" | "notifications" | "toolbar" | "power"
+     */
+    property string currentView: "default"
+    
+    /** True when showing an expanded screen (not default collapsed view) */
+    property bool isExpanded: currentView !== "default"
+    
+    // ═══════════════════════════════════════════════════════════════
+    // POPUP STATES - Temporary overlays that expand the bar
+    // ═══════════════════════════════════════════════════════════════
+    
+    /** True when notification popup is showing (auto-set from Notifications service) */
     property bool notificationPopupActive: Notifications.popupList.length > 0
-    property var currentPopupNotifications: Notifications.popupList
     
-    // Pause timers when hovering over notification popup
-    function pauseNotificationTimers() {
-        Notifications.pauseAllTimers()
-    }
-    
-    function resumeNotificationTimers() {
-        Notifications.resumeAllTimers()
-    }
-    
-    // Dismiss a popup notification
-    function dismissPopupNotification(id) {
-        Notifications.discardNotification(id)
-    }
-    
-    // ═══════════════════════════════════════════════════════════════
-    // VOLUME OVERLAY - GNOME-style volume feedback
-    // ═══════════════════════════════════════════════════════════════
+    /** True when volume overlay is visible (triggered by showVolumeOverlay()) */
     property bool volumeOverlayActive: false
-    property bool wasDiscreteBeforeVolume: false  // Store previous discrete state
-    property string previousBarState: ""  // Store previous bar state for shell
     
-    // Signal to tell parent to switch to floating mode
-    signal volumeOverlayStateChanged(bool active)
-    signal notificationPopupStateChanged(bool active)
+    /** Combined state: true when bar is expanded for any reason */
+    readonly property bool screenNotchOpen: isExpanded || volumeOverlayActive || notificationPopupActive
     
-    // Emit state change signal when notification popup state changes
-    onNotificationPopupActiveChanged: {
-        notificationPopupStateChanged(notificationPopupActive)
-    }
+    // ═══════════════════════════════════════════════════════════════
+    // SIGNALS - Communication with parent
+    // ═══════════════════════════════════════════════════════════════
     
-    // Function to show volume overlay (called externally when volume changes via scroll)
+    /**
+     * Emitted when mouse hover state changes on the bar
+     * @param {bool} hovering - True when mouse is over the bar
+     * 
+     * Parent should connect this to BarBehavior.barHovered
+     */
+    signal barHoverChanged(bool hovering)
+    
+    /**
+     * Emitted when an expanded view requests to close
+     * 
+     * Parent can use this to update its state when bar collapses
+     */
+    signal closeRequested()
+    
+    /**
+     * Emitted when popup state changes (notifications or volume)
+     * @param {bool} active - True when any popup is active
+     * 
+     * Parent should use this to force floating mode during popups
+     */
+    signal popupActiveChanged(bool active)
+    
+    // Auto-emit popup changes to parent
+    onNotificationPopupActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive)
+    onVolumeOverlayActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive)
+    
+    // ═══════════════════════════════════════════════════════════════
+    // PUBLIC METHODS
+    // ═══════════════════════════════════════════════════════════════
+    
+    /**
+     * Show volume overlay with auto-hide timer
+     * 
+     * Called externally (e.g., on scroll wheel) to display GNOME-style
+     * volume feedback. Auto-hides after 2 seconds of inactivity.
+     */
     function showVolumeOverlay() {
-        if (!volumeOverlayActive) {
-            wasDiscreteBeforeVolume = discreteMode
-        }
         volumeOverlayActive = true
         volumeHideTimer.restart()
     }
     
-    // Timer to hide volume overlay after 2 seconds of no activity
+    /**
+     * Open an expanded screen view
+     * @param {string} viewName - One of: "launcher", "live", "notifications", "toolbar", "power"
+     */
+    function openView(viewName) {
+        if (currentView === viewName) return
+        if (!screenViews[viewName]) return
+
+        var props = { screenSource: screenViews[viewName] }
+
+        if (currentView === "default") {
+            stackViewInternal.push(screenLoaderComponent, props)
+        } else {
+            stackViewInternal.replace(screenLoaderComponent, props)
+        }
+        currentView = viewName
+    }
+    
+    /**
+     * Close expanded view and return to default collapsed state
+     */
+    function closeView() {
+        if (currentView === "default") return
+        stackViewInternal.pop()
+        currentView = "default"
+        closeRequested()
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // NOTIFICATION HELPERS - Internal methods for popup widget
+    // ═══════════════════════════════════════════════════════════════
+    
+    /** Current list of popup notifications to display */
+    property var currentPopupNotifications: Notifications.popupList
+    
+    /** Pause auto-dismiss timers (called on hover) */
+    function pauseNotificationTimers() { Notifications.pauseAllTimers() }
+    
+    /** Resume auto-dismiss timers (called on hover exit) */
+    function resumeNotificationTimers() { Notifications.resumeAllTimers() }
+    
+    /** Dismiss a specific notification by ID */
+    function dismissPopupNotification(id) { Notifications.discardNotification(id) }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // VOLUME OVERLAY TIMER
+    // ═══════════════════════════════════════════════════════════════
+    
+    /**
+     * Timer to auto-hide volume overlay after inactivity
+     * Restarts on each volume interaction
+     */
     Timer {
         id: volumeHideTimer
-        interval: 2000
-        onTriggered: {
-            volumeOverlayActive = false
-        }
+        interval: 2000  // 2 seconds
+        onTriggered: volumeOverlayActive = false
     }
     
-    // Emit state change signal when volume overlay state changes
-    onVolumeOverlayActiveChanged: {
-        volumeOverlayStateChanged(volumeOverlayActive)
-    }
+    // ═══════════════════════════════════════════════════════════════
+    // TRANSFORM CONTROLLERS - Visual transformations
+    // ═══════════════════════════════════════════════════════════════
     
-    // Y position for glass backdrop sync - use binding to always match transform
-    property real yPosition: slideTransform.y
+    /** Y position for glass backdrop sync - tracks slide transform */
+    property real yPosition: barTransform.slideY
     
-    // Slide animation: translate Y when hiding (like WorkspaceBar and StatusBar)
-    transform: Translate {
-        id: slideTransform
-        y: showBar ? 0 : (notchContainer.implicitHeight + 20)
+    /**
+     * BarTransform - Calculates dimensions and slide animation
+     * 
+     * Handles:
+     * - Bar width/height based on discrete/floating/expanded state
+     * - Corner radius transitions
+     * - Slide Y offset for show/hide animation
+     */
+    BarTransform {
+        id: barTransform
+        target: notchContainer
+        discreteMode: notchContainer.discreteMode
+        expanded: screenNotchOpen
+        showBar: notchContainer.showBar
+        contentWidth: stackContainer.width
+        contentHeight: stackContainer.height
+        animDuration: notchContainer.animDuration
         
-        Behavior on y {
-            NumberAnimation {
-                duration: 400
-                easing.type: showBar ? Easing.OutBack : Easing.InQuad
-                easing.overshoot: 1.2
+        // Dimension configuration
+        discreteWidth: notchContainer.discreteWidth
+        discreteHeight: notchContainer.discreteHeight
+        normalHeight: notchContainer.normalHeight
+        expandedPadding: 32
+        collapsedPadding: 24
+        
+        // Radius configuration from Theme
+        discreteRadius: 12
+        normalRadius: Theme.barRoundness
+        expandedRadius: Theme.containerRoundness
+    }
+    
+    /**
+     * SizeAnimator - Provides smooth animated dimensions
+     * 
+     * Wraps the target dimensions with animation behaviors.
+     * Handles special cases: notification popup and volume overlay
+     * override normal dimensions.
+     */
+    SizeAnimator {
+        id: sizeAnimator
+        duration: notchContainer.animDuration
+        expanded: screenNotchOpen
+        
+        // Width: popup > volume > normal transform
+        targetWidth: {
+            if (notificationPopupActive && currentView === "default") {
+                return notificationPopupWidth
+            } else if (volumeOverlayActive && currentView === "default") {
+                return volumeOverlayWidth
+            } else {
+                return barTransform.barWidth
             }
         }
+        
+        // Height: popup (dynamic) > volume > normal transform
+        targetHeight: {
+            if (notificationPopupActive && currentView === "default") {
+                var contentHeight = stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitHeight : 0
+                return contentHeight + 24
+            } else if (volumeOverlayActive && currentView === "default") {
+                return volumeOverlayHeight
+            } else {
+                return barTransform.barHeight
+            }
+        }
+        
+        targetRadius: barTransform.barRadius
     }
     
-    // Signal for parent to detect hover on the bar
-    signal barHoverChanged(bool hovering)
-    signal closeRequested()
-
-    // Ambxst uses 300ms
-    property int animDuration: Root.State.animDuration
+    /**
+     * StackTransitions - Reusable push/pop/replace animations
+     * 
+     * Provides consistent transition animations for the StackView
+     * when navigating between screens.
+     */
+    StackTransitions {
+        id: stackTransitions
+        duration: notchContainer.animDuration
+    }
     
-    // Discrete mode dimensions - wider to fit time + notification icon
+    // ═══════════════════════════════════════════════════════════════
+    // FADE ANIMATORS - Content visibility transitions
+    // ═══════════════════════════════════════════════════════════════
+    
+    /** Fade animator for notification popup visibility */
+    FadeAnimator {
+        id: notificationFade
+        show: notificationPopupActive && !volumeOverlayActive
+        duration: notchContainer.animDuration / 2
+    }
+    
+    /** Fade animator for volume overlay visibility */
+    FadeAnimator {
+        id: volumeFade
+        show: volumeOverlayActive && !notificationPopupActive
+        duration: notchContainer.animDuration / 2
+    }
+    
+    /** Fade animator for default floating row */
+    FadeAnimator {
+        id: defaultFade
+        show: floatingMode && !volumeOverlayActive && !notificationPopupActive
+        duration: notchContainer.animDuration / 2
+    }
+    
+    /** Fade animator for discrete mode row */
+    FadeAnimator {
+        id: discreteFade
+        show: discreteMode && !volumeOverlayActive && !notificationPopupActive
+        duration: notchContainer.animDuration / 2
+    }
+    
+    /** Apply slide transform from BarTransform */
+    transform: barTransform.slideTransform
+
+    // ═══════════════════════════════════════════════════════════════
+    // DIMENSION CONSTANTS
+    // ═══════════════════════════════════════════════════════════════
+    
+    /** Animation duration from global state (readonly) */
+    readonly property int animDuration: Root.State.animDuration
+    
+    /** Width of minimal discrete notch */
     readonly property int discreteWidth: 110
+    
+    /** Height of minimal discrete notch */
     readonly property int discreteHeight: 24
+    
+    /** Height of floating bar */
     readonly property int normalHeight: 44
-    // Volume overlay dimensions
+    
+    /** Width of volume overlay */
     readonly property int volumeOverlayWidth: 280
+    
+    /** Height of volume overlay */
     readonly property int volumeOverlayHeight: 44
     
-    // Notification popup dimensions
+    /** Width of notification popup */
     readonly property int notificationPopupWidth: 380
+    
+    /** Base height of notification popup */
     readonly property int notificationPopupBaseHeight: 70
+    
+    /** Maximum height of notification popup */
     readonly property int notificationPopupMaxHeight: 400
     
-    // Discrete mode uses flat bottom (attached to screen edge)
-    property bool discreteFlatBottom: discreteMode && !screenNotchOpen && !volumeOverlayActive && !notificationPopupActive
+    // ═══════════════════════════════════════════════════════════════
+    // ADAPTIVE COLORS - Based on wallpaper/background
+    // ═══════════════════════════════════════════════════════════════
     
-    // Adaptive colors based on background
+    /**
+     * AdaptiveColors - Provides colors that adapt to background
+     * 
+     * Samples the wallpaper in the "notch" region to provide
+     * readable text colors regardless of background.
+     */
     AdaptiveColors {
         id: adaptiveColors
         region: "notch"
     }
     
-    // Force animation retrigger on every view change
+    // ═══════════════════════════════════════════════════════════════
+    // SIZE BINDING - Final dimensions with animation trigger hack
+    // ═══════════════════════════════════════════════════════════════
+    
+    /**
+     * Animation trigger hack - forces binding re-evaluation
+     * Random value added (multiplied by 0) to force recalculation
+     */
     property real animationTrigger: 0
     onScreenNotchOpenChanged: {
         if (screenNotchOpen) {
@@ -136,96 +392,33 @@ Item {
         }
     }
 
-    // Helper function for creating fade animations
-    function createFadeAnim(from, to) {
-        return { property: "opacity", from: from, to: to, duration: animDuration, easing: Easing.OutQuart }
-    }
+    /** Final animated width from SizeAnimator */
+    implicitWidth: sizeAnimator.animatedWidth + (screenNotchOpen ? animationTrigger * 0 : 0)
     
-    // Helper function for creating scale animations
-    function createScaleAnim(from, to, useBack) {
-        return { 
-            property: "scale", from: from, to: to, duration: animDuration, 
-            easing: useBack ? Easing.OutBack : Easing.OutQuart, overshoot: useBack ? 1.2 : 1.0 
-        }
-    }
+    /** Final animated height from SizeAnimator */
+    implicitHeight: sizeAnimator.animatedHeight + (screenNotchOpen ? animationTrigger * 0 : 0)
 
-    // CRITICAL: Ambxst animates implicitWidth/Height on the ROOT Item
-    // In discrete mode, shrink to minimal notch; otherwise use normal sizes
-    // Volume overlay and notification popup take priority over discrete mode
-    implicitWidth: {
-        if (notificationPopupActive && currentView === "default") {
-            return notificationPopupWidth
-        } else if (volumeOverlayActive && currentView === "default") {
-            return volumeOverlayWidth
-        } else if (discreteMode && !screenNotchOpen) {
-            return discreteWidth
-        } else if (screenNotchOpen) {
-            return Math.max(stackContainer.width + 32 + animationTrigger * 0, 290)
-        } else {
-            return stackContainer.width + 24
-        }
-    }
-    implicitHeight: {
-        if (notificationPopupActive && currentView === "default") {
-            // Use actual content height from the stack view + padding
-            var contentHeight = stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitHeight : 0
-            return contentHeight + 24
-        } else if (volumeOverlayActive && currentView === "default") {
-            return volumeOverlayHeight
-        } else if (discreteMode && !screenNotchOpen) {
-            return discreteHeight
-        } else if (screenNotchOpen) {
-            return Math.max(stackContainer.height + 32 + animationTrigger * 0, 44)
-        } else {
-            return normalHeight
-        }
-    }
+    // ═══════════════════════════════════════════════════════════════
+    // VISUAL ELEMENTS
+    // ═══════════════════════════════════════════════════════════════
 
-    // Ambxst: Behavior on implicitWidth/Height with conditional easing
-    Behavior on implicitWidth {
-        enabled: (screenNotchOpen || stackViewInternal.busy || discreteMode !== undefined) && animDuration > 0
-        NumberAnimation {
-            duration: animDuration
-            easing.type: screenNotchOpen ? Easing.OutBack : Easing.OutQuart
-            easing.overshoot: screenNotchOpen ? 1.8 : 1.0
-        }
-    }
-
-    Behavior on implicitHeight {
-        enabled: (screenNotchOpen || stackViewInternal.busy || discreteMode !== undefined) && animDuration > 0
-        NumberAnimation {
-            duration: animDuration
-            easing.type: screenNotchOpen ? Easing.OutBack : Easing.OutQuart
-            easing.overshoot: screenNotchOpen ? 1.8 : 1.0
-        }
-    }
-
+    /**
+     * ShadowBorder - Background with shadow and rounded corners
+     * 
+     * Provides the glass-like background with configurable radius
+     * and optional flat bottom for discrete mode (attached to edge).
+     */
     ShadowBorder {
-        // In discrete mode, use smaller roundness for the notch look
-        radius: {
-            if (discreteMode && !screenNotchOpen) {
-                return 12  // Rounded top corners for notch
-            } else if (screenNotchOpen) {
-                return Theme.containerRoundness
-            } else {
-                return Theme.barRoundness
-            }
-        }
-        
-        // Flat bottom in discrete mode (attached to edge)
-        flatBottom: discreteFlatBottom
-        
-        Behavior on radius {
-            enabled: animDuration > 0
-            NumberAnimation {
-                duration: animDuration
-                easing.type: screenNotchOpen ? Easing.OutBack : Easing.OutQuart
-                easing.overshoot: screenNotchOpen ? 1.8 : 1.0
-            }
-        }
+        radius: sizeAnimator.animatedRadius
+        flatBottom: barTransform.flatBottom && !volumeOverlayActive && !notificationPopupActive
     }
 
-    // Content container (Ambxst: stackContainer)
+    /**
+     * Stack Container - Holds the StackView with content
+     * 
+     * Provides padding around the StackView content.
+     * Width/height expand when showing screens.
+     */
     Item {
         id: stackContainer
         anchors.centerIn: parent
@@ -233,48 +426,48 @@ Item {
         height: stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitHeight + (screenNotchOpen ? 32 : 0) : (screenNotchOpen ? 32 : 0)
         clip: true
 
+        /**
+         * StackView - Screen navigation container
+         * 
+         * Manages push/pop/replace transitions between:
+         * - Default view (collapsed bar content)
+         * - Screen views (launcher, notifications, etc.)
+         */
         StackView {
             id: stackViewInternal
             anchors.fill: parent
             anchors.margins: screenNotchOpen ? 16 : 0
             initialItem: defaultViewComponent
 
-            pushEnter: Transition {
-                PropertyAnimation { property: "opacity"; from: 0; to: 1; duration: animDuration; easing.type: Easing.OutQuart }
-                PropertyAnimation { property: "scale"; from: 0.8; to: 1; duration: animDuration; easing.type: Easing.OutBack; easing.overshoot: 1.2 }
-            }
-
-            pushExit: Transition {
-                PropertyAnimation { property: "opacity"; from: 1; to: 0; duration: animDuration; easing.type: Easing.OutQuart }
-                PropertyAnimation { property: "scale"; from: 1; to: 1.05; duration: animDuration; easing.type: Easing.OutQuart }
-            }
-
-            popEnter: Transition {
-                PropertyAnimation { property: "opacity"; from: 0; to: 1; duration: animDuration; easing.type: Easing.OutQuart }
-                PropertyAnimation { property: "scale"; from: 1.05; to: 1; duration: animDuration; easing.type: Easing.OutQuart }
-            }
-
-            popExit: Transition {
-                PropertyAnimation { property: "opacity"; from: 1; to: 0; duration: animDuration; easing.type: Easing.OutQuart }
-                PropertyAnimation { property: "scale"; from: 1; to: 0.95; duration: animDuration; easing.type: Easing.OutQuart }
-            }
-
-            replaceEnter: Transition {
-                PropertyAnimation { property: "opacity"; from: 0; to: 1; duration: animDuration; easing.type: Easing.OutQuart }
-                PropertyAnimation { property: "scale"; from: 0.8; to: 1; duration: animDuration; easing.type: Easing.OutBack; easing.overshoot: 1.2 }
-            }
-
-            replaceExit: Transition {
-                PropertyAnimation { property: "opacity"; from: 1; to: 0; duration: animDuration; easing.type: Easing.OutQuart }
-                PropertyAnimation { property: "scale"; from: 1; to: 1.05; duration: animDuration; easing.type: Easing.OutQuart }
-            }
+            // Reusable transition animations
+            pushEnter: stackTransitions.pushEnter
+            pushExit: stackTransitions.pushExit
+            popEnter: stackTransitions.popEnter
+            popExit: stackTransitions.popExit
+            replaceEnter: stackTransitions.replaceEnter
+            replaceExit: stackTransitions.replaceExit
         }
     }
 
-    // Default collapsed view
+    // ═══════════════════════════════════════════════════════════════
+    // DEFAULT VIEW COMPONENT - Collapsed bar content
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Default View - Content shown when bar is collapsed
+     * 
+     * Contains four mutually exclusive content layers:
+     * 1. NotificationPopupWidget - When notifications arrive
+     * 2. VolumeOverlayWidget - When adjusting volume
+     * 3. defaultRow - Floating mode (weather, time, notification count)
+     * 4. discreteRow - Discrete mode (time, notification icon)
+     * 
+     * FadeAnimators control smooth transitions between layers.
+     */
     Component {
         id: defaultViewComponent
         Item {
+            // Dynamic size based on which content is visible
             implicitWidth: {
                 if (notificationPopupActive) return notificationPopupWidth - 32
                 if (volumeOverlayActive) return volumeOverlayRow.implicitWidth
@@ -288,284 +481,72 @@ Item {
                 return 36
             }
 
-            // ═══════════════════════════════════════════════════════════════
-            // NOTIFICATION POPUP - Shows when new notifications arrive
-            // ═══════════════════════════════════════════════════════════════
-            Column {
+            /**
+             * Notification Popup - Shows incoming notifications
+             * 
+             * Displays a stack of notification items with app icon,
+             * summary, body, time, and dismiss button.
+             * Auto-hides after timeout unless hovered.
+             */
+            NotificationPopupWidget {
                 id: notificationPopupColumn
                 anchors.fill: parent
-                spacing: 16
-                visible: notificationPopupActive && !volumeOverlayActive
-                opacity: (notificationPopupActive && !volumeOverlayActive) ? 1 : 0
+                visible: notificationFade.actualVisible
+                opacity: notificationFade.animatedOpacity
                 
-                Behavior on opacity {
-                    NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
-                }
+                notifications: currentPopupNotifications
+                textColor: adaptiveColors.textColor
+                textColorSecondary: adaptiveColors.textColorSecondary
+                subtleTextColor: adaptiveColors.subtleTextColor
+                animDuration: notchContainer.animDuration
                 
-                // Notification items (newest at top, stack downwards)
-                Repeater {
-                    model: currentPopupNotifications.slice(0, 10)  // Show max 10 notifications
-                    
-                    delegate: Item {
-                        id: notifItem
-                        width: notificationPopupColumn.width
-                        height: notifRow.implicitHeight + 16
-                        
-                        required property var modelData
-                        required property int index
-                        property var notification: modelData
-                        
-                    MouseArea {
-                        id: notifHoverArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        
-                        onEntered: pauseNotificationTimers()
-                        onExited: resumeNotificationTimers()
-                        onClicked: {
-                            // Open notification screen on click
-                            notchContainer.openView("notifications")
-                            Notifications.hideAllPopups()
-                        }
-                    }
-                    
-                    RowLayout {
-                        id: notifRow
-                        anchors.fill: parent
-                        anchors.margins: 16
-                        spacing: 10
-                        
-                        // App icon
-                        Item {
-                            Layout.preferredWidth: 36
-                            Layout.preferredHeight: 36
-                            Layout.alignment: Qt.AlignTop
-                            
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: 8
-                                color: adaptiveColors.subtleTextColor
-                                opacity: 0.15
-                                visible: !appIconImage.visible
-                            }
-                            
-                            Image {
-                                id: appIconImage
-                                anchors.fill: parent
-                                source: notification && notification.appIcon ? "image://icon/" + notification.appIcon : ""
-                                fillMode: Image.PreserveAspectFit
-                                visible: status === Image.Ready
-                            }
-                            
-                            Text {
-                                anchors.centerIn: parent
-                                text: "📬"
-                                font.pixelSize: 18
-                                visible: !appIconImage.visible
-                            }
-                        }
-                        
-                        // Notification content
-                        Column {
-                            Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignVCenter
-                            spacing: 2
-                            
-                            // Header row: app name + time
-                            RowLayout {
-                                width: parent.width
-                                spacing: 4
-                                
-                                Text {
-                                    text: notification ? notification.summary : ""
-                                    color: adaptiveColors.textColor
-                                    font.pixelSize: 12
-                                    font.weight: Font.Bold
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideRight
-                                    maximumLineCount: 1
-                                }
-                                
-                                Text {
-                                    text: notification ? NotificationUtils.getFriendlyNotifTimeString(notification.time) : ""
-                                    color: adaptiveColors.subtleTextColor
-                                    font.pixelSize: 10
-                                }
-                            }
-                            
-                            // Body
-                            Text {
-                                width: parent.width
-                                text: notification ? NotificationUtils.processNotificationBody(notification.body, notification.appName) : ""
-                                color: adaptiveColors.textColorSecondary
-                                font.pixelSize: 11
-                                wrapMode: Text.WordWrap
-                                maximumLineCount: 2
-                                elide: Text.ElideRight
-                            }
-                        }
-                        
-                        // Dismiss button
-                        Item {
-                            Layout.preferredWidth: 20
-                            Layout.preferredHeight: 20
-                            Layout.alignment: Qt.AlignTop
-                            
-                            Text {
-                                anchors.centerIn: parent
-                                text: "✕"
-                                color: dismissArea.containsMouse ? adaptiveColors.textColor : adaptiveColors.subtleTextColor
-                                font.pixelSize: 12
-                                
-                                Behavior on color {
-                                    ColorAnimation { duration: 150 }
-                                }
-                            }
-                            
-                            MouseArea {
-                                id: dismissArea
-                                anchors.fill: parent
-                                anchors.margins: -4
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (notification) {
-                                        dismissPopupNotification(notification.id)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Entry animation
-                    Component.onCompleted: {
-                        notifItem.opacity = 0
-                        notifItem.scale = 0.8
-                        entryAnim.start()
-                    }
-                    
-                    ParallelAnimation {
-                        id: entryAnim
-                        NumberAnimation { target: notifItem; property: "opacity"; to: 1; duration: animDuration; easing.type: Easing.OutQuart }
-                        NumberAnimation { target: notifItem; property: "scale"; to: 1; duration: animDuration; easing.type: Easing.OutBack; easing.overshoot: 1.2 }
-                    }
+                onHoverStarted: pauseNotificationTimers()
+                onHoverEnded: resumeNotificationTimers()
+                onNotificationClicked: {
+                    notchContainer.openView("notifications")
+                    Notifications.hideAllPopups()
                 }
+                onNotificationDismissed: (id) => dismissPopupNotification(id)
             }
-            }  // Close Column
 
-            // ═══════════════════════════════════════════════════════════════
-            // VOLUME OVERLAY ROW - Shows when volume is being adjusted
-            // ═══════════════════════════════════════════════════════════════
-            RowLayout {
+            /**
+             * Volume Overlay - GNOME-style volume feedback
+             * 
+             * Shows volume icon, slider bar, and percentage.
+             * Interactive: click/drag slider, scroll to adjust.
+             * Auto-hides after 2 seconds of inactivity.
+             */
+            VolumeOverlayWidget {
                 id: volumeOverlayRow
                 anchors.centerIn: parent
-                spacing: 12
-                visible: volumeOverlayActive && !notificationPopupActive
-                opacity: (volumeOverlayActive && !notificationPopupActive) ? 1 : 0
+                visible: volumeFade.actualVisible
+                opacity: volumeFade.animatedOpacity
                 
-                Behavior on opacity {
-                    NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
-                }
+                volume: Audio.volume
+                muted: Audio.muted
+                textColor: adaptiveColors.textColor
+                subtleTextColor: adaptiveColors.subtleTextColor
                 
-                // Volume icon
-                Text {
-                    id: volumeIcon
-                    text: {
-                        if (Audio.muted || Audio.volume === 0) return "🔇"
-                        if (Audio.volume < 0.33) return "🔉"
-                        if (Audio.volume < 0.66) return "🔊"
-                        return "🔊"
-                    }
-                    font.pixelSize: 18
-                    Layout.alignment: Qt.AlignVCenter
-                }
-                
-                // Volume slider bar
-                Item {
-                    Layout.preferredWidth: 180
-                    Layout.preferredHeight: 8
-                    Layout.alignment: Qt.AlignVCenter
-                    
-                    // Background track
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: 4
-                        color: adaptiveColors.subtleTextColor
-                        opacity: 0.3
-                    }
-                    
-                    // Progress fill
-                    Rectangle {
-                        width: parent.width * Audio.volume
-                        height: parent.height
-                        radius: 4
-                        color: adaptiveColors.textColor
-                        
-                        Behavior on width {
-                            NumberAnimation { duration: 100; easing.type: Easing.OutQuad }
-                        }
-                    }
-                    
-                    // Make slider interactive
-                    MouseArea {
-                        anchors.fill: parent
-                        anchors.margins: -8
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        
-                        onPressed: (mouse) => {
-                            updateVolumeFromMouse(mouse)
-                        }
-                        
-                        onPositionChanged: (mouse) => {
-                            if (pressed) {
-                                updateVolumeFromMouse(mouse)
-                            }
-                        }
-                        
-                        function updateVolumeFromMouse(mouse) {
-                            var newVolume = Math.max(0, Math.min(1, (mouse.x - 8) / (width - 16)))
-                            Audio.setVolume(newVolume)
-                            volumeHideTimer.restart()
-                        }
-                        
-                        // Scroll wheel support on the slider too
-                        onWheel: (wheel) => {
-                            if (wheel.angleDelta.y > 0) {
-                                Audio.incrementVolume()
-                            } else {
-                                Audio.decrementVolume()
-                            }
-                            volumeHideTimer.restart()
-                        }
-                    }
-                }
-                
-                // Volume percentage
-                Text {
-                    text: Math.round(Audio.volume * 100) + "%"
-                    color: adaptiveColors.textColor
-                    font.pixelSize: 13
-                    font.weight: Font.Medium
-                    font.family: "monospace"
-                    Layout.preferredWidth: 40
-                    Layout.alignment: Qt.AlignVCenter
-                    horizontalAlignment: Text.AlignRight
-                }
+                onVolumeChangeRequested: (v) => Audio.setVolume(v)
+                onVolumeIncrementRequested: Audio.incrementVolume()
+                onVolumeDecrementRequested: Audio.decrementVolume()
+                onInteracted: volumeHideTimer.restart()
             }
 
-            // Full default row (visible when not in discrete mode and not volume overlay or notification popup)
+            /**
+             * Default Row - Floating mode content
+             * 
+             * Shows: Weather icon | Time | Notification bell
+             * Each element is clickable to open its respective screen.
+             */
             RowLayout {
                 id: defaultRow
                 anchors.centerIn: parent
                 spacing: 10
-                visible: !discreteMode && !volumeOverlayActive && !notificationPopupActive
-                opacity: (discreteMode || volumeOverlayActive || notificationPopupActive) ? 0 : 1
-                
-                Behavior on opacity {
-                    NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
-                }
+                visible: defaultFade.actualVisible
+                opacity: defaultFade.animatedOpacity
 
+                /** Weather icon - opens live screen */
                 Item {
                     width: 28; height: 28
                     Text {
@@ -579,8 +560,10 @@ Item {
                     }
                 }
 
+                /** Separator dot */
                 Rectangle { width: 4; height: 4; radius: 2; color: adaptiveColors.subtleTextColor }
 
+                /** Time display - opens live screen */
                 Text {
                     id: timeTextFull
                     color: adaptiveColors.textColor
@@ -600,11 +583,14 @@ Item {
                     }
                 }
 
+                /** Separator dot */
                 Rectangle { width: 4; height: 4; radius: 2; color: adaptiveColors.subtleTextColor }
 
+                /** Notification indicator - opens notifications screen */
                 Item {
                     width: 28; height: 28
                     
+                    /** Notification count badge */
                     Text {
                         anchors.centerIn: parent
                         text: Notifications.list.length > 0 ? Notifications.list.length.toString() : "0"
@@ -615,6 +601,7 @@ Item {
                         visible: Notifications.list.length > 0
                     }
                     
+                    /** Bell icon (shown when no notifications) */
                     Text {
                         anchors.centerIn: parent
                         text: "🔔"; font.pixelSize: 16
@@ -628,19 +615,21 @@ Item {
                 }
             }
             
-            // Discrete mode row (minimal: time + notification icon)
+            /**
+             * Discrete Row - Minimal notch content
+             * 
+             * Shows: Time | Notification icon/count
+             * More compact than floating mode, docks to screen edge.
+             */
             Row {
                 id: discreteRow
                 anchors.centerIn: parent
                 anchors.verticalCenterOffset: -1  // Slight offset since attached to bottom
                 spacing: 10
-                visible: discreteMode && !volumeOverlayActive && !notificationPopupActive
-                opacity: (discreteMode && !volumeOverlayActive && !notificationPopupActive) ? 1 : 0
-                
-                Behavior on opacity {
-                    NumberAnimation { duration: animDuration / 2; easing.type: Easing.InOutQuad }
-                }
+                visible: discreteFade.actualVisible
+                opacity: discreteFade.animatedOpacity
 
+                /** Time display (monospace) */
                 Text {
                     id: timeTextDiscrete
                     anchors.verticalCenter: parent.verticalCenter
@@ -656,12 +645,13 @@ Item {
                     }
                 }
 
-                // Notification icon (on the right side)
+                /** Notification icon with count */
                 Item {
                     width: 16
                     height: 16
                     anchors.verticalCenter: parent.verticalCenter
                     
+                    /** Count badge */
                     Text {
                         anchors.centerIn: parent
                         anchors.verticalCenterOffset: -1
@@ -674,6 +664,7 @@ Item {
                         z: 1
                     }
                     
+                    /** Bell icon */
                     Text {
                         anchors.centerIn: parent
                         text: "🔔"
@@ -685,7 +676,11 @@ Item {
         }
     }
 
-    // Screen view mapping
+    // ═══════════════════════════════════════════════════════════════
+    // SCREEN NAVIGATION
+    // ═══════════════════════════════════════════════════════════════
+
+    /** Screen view mapping - Maps view names to QML file paths */
     readonly property var screenViews: ({
         "launcher": "../../screens/AppLauncher.qml",
         "live": "../../screens/LiveScreen.qml",
@@ -694,7 +689,12 @@ Item {
         "power": "../../screens/PowerScreen.qml"
     })
 
-    // Dynamic screen loader component
+    /**
+     * Screen Loader Component - Dynamically loads screen QML files
+     * 
+     * Connects closeRequested signal from loaded screen to closeView().
+     * Focuses loaded item for keyboard input.
+     */
     Component {
         id: screenLoaderComponent
         Loader {
@@ -702,37 +702,28 @@ Item {
             source: screenSource
             onLoaded: {
                 if (item && item.closeRequested) item.closeRequested.connect(notchContainer.closeView)
-                // Focus the loaded item to enable keyboard input
                 if (item) item.forceActiveFocus()
             }
         }
     }
 
-    // View management
-    function openView(viewName) {
-        if (currentView === viewName) return
-        if (!screenViews[viewName]) return
+    // ═══════════════════════════════════════════════════════════════
+    // KEYBOARD HANDLING
+    // ═══════════════════════════════════════════════════════════════
 
-        var props = { screenSource: screenViews[viewName] }
-
-        if (currentView === "default") {
-            stackViewInternal.push(screenLoaderComponent, props)
-        } else {
-            stackViewInternal.replace(screenLoaderComponent, props)
-        }
-        currentView = viewName
-    }
-
-    function closeView() {
-        if (currentView === "default") return
-        stackViewInternal.pop()
-        currentView = "default"
-        closeRequested()
-    }
-
+    /** Close expanded view on Escape key */
     Keys.onEscapePressed: if (isExpanded) closeView()
     
-    // Hover detection for the entire bar (used for discrete mode toggle)
+    // ═══════════════════════════════════════════════════════════════
+    // HOVER DETECTION
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * BarHoverDetector - Detects mouse hover over the bar
+     * 
+     * Emits barHoverChanged signal for parent to update BarBehavior.
+     * Used for discrete mode toggle on hover.
+     */
     BarHoverDetector {
         onHoverChanged: (hovering) => notchContainer.barHoverChanged(hovering)
     }

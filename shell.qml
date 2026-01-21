@@ -6,6 +6,8 @@ import Quickshell.Hyprland
 import QtQuick
 import QtQuick.Layouts
 import "components"
+import "components/behavior"
+import "config"
 import "globals" as Root
 import "globals"
 
@@ -141,13 +143,16 @@ ShellRoot {
 
         color: "transparent"
 
-        // State: "discrete" (docked), "hidden", "floating"
-        property string barState: "discrete"
+        // Track dependencies explicitly for hasActiveWindows reactivity
+        property var _activeToplevel: ToplevelManager.activeToplevel
+        property bool _toplevelActivated: _activeToplevel ? _activeToplevel.activated : false
         
-        // Discrete mode: docked to edge when there are active windows
-        readonly property bool shouldBeDiscrete: {
+        // Detect active windows in current workspace
+        readonly property bool hasActiveWindows: {
             if (mainBarContent.isExpanded) return false
             
+            // Use tracked properties for reactivity
+            var activated = _toplevelActivated
             var currentWs = Root.State.activeWorkspace
             var wsData = Hyprland.workspaces.values.find(function(ws) { return ws.id === currentWs })
             
@@ -155,7 +160,7 @@ ShellRoot {
                 return false
             }
             
-            var toplevel = ToplevelManager.activeToplevel
+            var toplevel = _activeToplevel
             if (!toplevel) return false
             
             var toplevelAddress = toplevel.HyprlandToplevel ? toplevel.HyprlandToplevel.address : null
@@ -163,42 +168,26 @@ ShellRoot {
             
             for (var i = 0; i < wsData.toplevels.values.length; i++) {
                 if (wsData.toplevels.values[i].address === toplevelAddress) {
-                    return toplevel.activated
+                    return activated
                 }
             }
             return false
         }
-        
-        // When conditions change, switch states appropriately
-        onShouldBeDiscreteChanged: {
-            if (!shouldBeDiscrete) {
-                // No windows - always go to floating (from discrete or hidden)
-                if (barState === "discrete" || barState === "hidden") {
-                    barState = "floating"
-                }
-            } else {
-                // Has windows - go to discrete if not being hovered (and no popups active)
-                if (barState === "floating" && !barIsHovered && !mainBarContent.notificationPopupActive && !mainBarContent.volumeOverlayActive) {
-                    barState = "discrete"
-                }
-            }
+
+        // Bar behavior controller - handles all visibility/state logic
+        BarBehavior {
+            id: mainBarBehavior
+            mode: Config.mainBarMode
+            barHovered: mainBarWindow.barIsHovered
+            edgeHit: mainBarHoverArea.containsMouse
+            popupActive: mainBarContent.notificationPopupActive || mainBarContent.volumeOverlayActive
+            isExpanded: mainBarContent.isExpanded
+            hasActiveWindows: mainBarWindow.hasActiveWindows
+            hideDelay: 1000
         }
         
-        // Timer to return from floating to discrete
-        Timer {
-            id: mainBarDiscreteTimer
-            interval: 1000
-            onTriggered: {
-                // Don't auto-hide if notification popup or volume overlay is active
-                if (mainBarContent.notificationPopupActive || mainBarContent.volumeOverlayActive) {
-                    return
-                }
-                if (mainBarWindow.barState === "floating" && !mainBarWindow.barIsHovered && mainBarWindow.shouldBeDiscrete) {
-                    mainBarWindow.barState = "discrete"
-                }
-                // If shouldBeDiscrete is false, stay floating
-            }
-        }
+        // Convenience property for barState (backward compatibility)
+        readonly property string barState: mainBarBehavior.internalState
         
         property bool barIsHovered: false
 
@@ -225,33 +214,6 @@ ShellRoot {
             anchors.bottom: parent.bottom
             width: Math.max(mainBarRegionContainer.width, mainBarEdgeTrigger.width)
             height: mainBarRegionContainer.height + 6 + 10  // bar + margin + edge trigger buffer
-        }
-        
-        // Hover zone that stays at discrete position - detects when mouse leaves the bar area
-        MouseArea {
-            id: discreteHoverZone
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.bottom: parent.bottom
-            width: mainBarContent.implicitWidth
-            height: mainBarContent.implicitHeight
-            hoverEnabled: true
-            propagateComposedEvents: true
-            acceptedButtons: Qt.NoButton
-            
-            onContainsMouseChanged: {
-                if (mainBarWindow.barState === "hidden") {
-                    if (containsMouse) {
-                        // Mouse still in zone - stay hidden
-                    } else {
-                        // Mouse left zone - show discrete (unless popups active)
-                        if (!mainBarContent.notificationPopupActive && !mainBarContent.volumeOverlayActive) {
-                            mainBarWindow.barState = "discrete"
-                        } else {
-                            mainBarWindow.barState = "floating"
-                        }
-                    }
-                }
-            }
         }
         
         // Edge trigger zone - always at bottom edge, always in mask
@@ -296,11 +258,11 @@ ShellRoot {
                 id: mainBarContent
                 anchors.centerIn: parent
                 
-                // Discrete mode = docked or hidden state (keep discrete look while sliding down)
-                discreteMode: (mainBarWindow.barState === "discrete" || mainBarWindow.barState === "hidden") && mainBarWindow.shouldBeDiscrete
+                // Pass compact state from BarBehavior
+                compactMode: mainBarBehavior.isCompact
                 
                 // Slide down when hidden (like WorkspaceBar and StatusBar)
-                showBar: mainBarWindow.barState !== "hidden"
+                showBar: mainBarBehavior.barVisible
 
                 onCurrentViewChanged: {
                     root.currentScreen = currentView === "default" ? "none" : currentView
@@ -310,11 +272,7 @@ ShellRoot {
                     updateGlassBackdropRounding()
                 }
                 
-                onDiscreteModeChanged: {
-                    updateGlassBackdropRounding()
-                }
-                
-                onDiscreteFlatBottomChanged: {
+                onCompactModeChanged: {
                     updateGlassBackdropRounding()
                 }
                 
@@ -322,7 +280,7 @@ ShellRoot {
                     var radius
                     if (isExpanded) {
                         radius = Theme.containerRoundness
-                    } else if (discreteMode) {
+                    } else if (compactMode) {
                         radius = 12
                     } else {
                         radius = Theme.barRoundness
@@ -334,81 +292,17 @@ ShellRoot {
                     root.currentScreen = "none"
                 }
                 
-                // Volume overlay state change - switch to floating when active
-                onVolumeOverlayStateChanged: (active) => {
-                    if (active) {
-                        // Store the current state before switching
-                        if (mainBarContent.previousBarState === "") {
-                            mainBarContent.previousBarState = mainBarWindow.barState
-                        }
-                        // Switch to floating to show the volume overlay properly
-                        mainBarWindow.barState = "floating"
-                        mainBarDiscreteTimer.stop()
-                    } else {
-                        // Only return to previous state if no other popups are active
-                        if (!mainBarContent.notificationPopupActive) {
-                            if (mainBarContent.previousBarState === "discrete" && mainBarWindow.shouldBeDiscrete) {
-                                mainBarWindow.barState = "discrete"
-                            } else if (mainBarContent.previousBarState === "hidden" && mainBarWindow.shouldBeDiscrete) {
-                                mainBarWindow.barState = "discrete"
-                            }
-                            mainBarContent.previousBarState = ""
-                            // Otherwise stay floating (or let the normal state machine handle it)
-                            mainBarDiscreteTimer.restart()
-                        }
-                        // If notification popup is active, stay floating
-                    }
+                // Popup state changes are communicated back to BarBehavior
+                onPopupActiveChanged: function(active) {
+                    // BarBehavior already watches this via the binding
                 }
-                
-                // Notification popup state change - switch to floating when active
-                onNotificationPopupStateChanged: (active) => {
-                    if (active) {
-                        // Store the current state before switching
-                        if (mainBarContent.previousBarState === "") {
-                            mainBarContent.previousBarState = mainBarWindow.barState
-                        }
-                        // Switch to floating to show notifications properly
-                        mainBarWindow.barState = "floating"
-                        mainBarDiscreteTimer.stop()
-                    } else {
-                        // Only return to previous state if no other popups are active
-                        if (!mainBarContent.volumeOverlayActive) {
-                            if (mainBarContent.previousBarState === "discrete" && mainBarWindow.shouldBeDiscrete) {
-                                mainBarWindow.barState = "discrete"
-                            } else if (mainBarContent.previousBarState === "hidden" && mainBarWindow.shouldBeDiscrete) {
-                                mainBarWindow.barState = "discrete"
-                            }
-                            mainBarContent.previousBarState = ""
-                            // Restart the timer to allow normal state machine to work
-                            mainBarDiscreteTimer.restart()
-                        }
-                        // If volume overlay is active, stay floating
-                    }
-                }
-                
-                // Simple state machine
                 onBarHoverChanged: (hovering) => {
                     mainBarWindow.barIsHovered = hovering
-                    
-                    if (hovering) {
-                        mainBarDiscreteTimer.stop()
-                        // Discrete + hover → Hidden
-                        if (mainBarWindow.barState === "discrete") {
-                            mainBarWindow.barState = "hidden"
-                        }
-                        // Floating + hover → stay floating
-                    } else {
-                        // Floating + leave → start timer to go discrete (but not if volume/notification overlay is active)
-                        if (mainBarWindow.barState === "floating" && !mainBarContent.volumeOverlayActive && !mainBarContent.notificationPopupActive) {
-                            mainBarDiscreteTimer.restart()
-                        }
-                        // Hidden state is handled by discreteHoverZone
-                    }
                 }
             }
         }
         
-        // Edge detection - brings bar back from hidden as floating
+        // Edge detection - BarBehavior monitors mainBarHoverArea.containsMouse via edgeHit property
         MouseArea {
             id: mainBarHoverArea
             z: 100
@@ -420,14 +314,7 @@ ShellRoot {
             anchors.bottom: parent.bottom
             width: 200
             height: 1
-            
-            onContainsMouseChanged: {
-                if (containsMouse) {
-                    // Edge hit → Floating (from any state)
-                    mainBarDiscreteTimer.stop()
-                    mainBarWindow.barState = "floating"
-                }
-            }
+            // containsMouse is read by BarBehavior.edgeHit
         }
     }
 
@@ -445,7 +332,8 @@ ShellRoot {
         margins.bottom: 0
         margins.left: 0
 
-        implicitHeight: reveal ? 56 : 1
+        // Window size - always big enough for hover detection
+        implicitHeight: 56
         implicitWidth: workspaceBarContent.implicitWidth + 50
 
         WlrLayershell.layer: WlrLayer.Top
@@ -454,87 +342,34 @@ ShellRoot {
 
         color: "transparent"
         
-        // Hover state with delay (Ambxst pattern)
-        property bool hoverActive: false
-        property bool barIsHovered: false
-        
-        // Reveal logic - use shared function
-        readonly property bool reveal: root.shouldRevealBar(hoverActive)
-        
         // Auto-reveal when workspace changes
         Connections {
             target: Root.State
             function onActiveWorkspaceChanged() {
-                workspaceBar.hoverActive = true
-                workspaceHideTimer.restart()
-            }
-        }
-        
-        // Timer to delay hiding after mouse leaves
-        Timer {
-            id: workspaceHideTimer
-            interval: 1000
-            repeat: false
-            onTriggered: {
-                if (!workspaceBar.barIsHovered && !workspaceHoverArea.containsMouse) {
-                    workspaceBar.hoverActive = false
-                }
-            }
-        }
-        
-        // Timer to delay showing when mouse enters edge
-        Timer {
-            id: workspaceShowTimer
-            interval: 500
-            repeat: false
-            onTriggered: {
-                workspaceBar.hoverActive = true
-                workspaceHideTimer.restart()
+                workspaceBarContent.showTemporarily()
             }
         }
 
         // Hover detection zone at bottom edge
         MouseArea {
             id: workspaceHoverArea
-            z: 100
+            anchors.fill: parent
             hoverEnabled: true
             propagateComposedEvents: true
-            onPressed: (mouse) => mouse.accepted = false
-            // Pass wheel events through to children
-            onWheel: (wheel) => wheel.accepted = false
-            
-            anchors.left: parent.left
-            anchors.bottom: parent.bottom
-            anchors.leftMargin: 0
-            anchors.bottomMargin: 0
-            width: workspaceBarContent.implicitWidth + 24
-            height: 56  // Same as bar height to prevent false leave events
-            
-            onContainsMouseChanged: {
-                if (containsMouse) {
-                    if (!workspaceBar.hoverActive) {
-                        workspaceShowTimer.restart()
-                    }
-                } else {
-                    workspaceShowTimer.stop()
-                    if (workspaceBar.hoverActive && !workspaceBar.barIsHovered) {
-                        workspaceHideTimer.restart()
-                    }
-                }
-            }
+            acceptedButtons: Qt.NoButton
         }
 
         WorkspaceBar {
             id: workspaceBarContent
-            z: 1  // Below the MouseArea
             anchors.left: parent.left
             anchors.bottom: parent.bottom
             anchors.leftMargin: 6
             anchors.bottomMargin: 6
-            showBar: workspaceBar.reveal
+            mode: Config.workspaceBarMode
+            hasActiveWindows: !root.shouldRevealBar(false)
+            edgeHit: workspaceHoverArea.containsMouse
             onLauncherRequested: mainBarContent.openView("launcher")
             onOverviewRequested: State.toggleOverview()
-            onBarHoverChanged: (hovering) => root.handleBarHover(workspaceBar, workspaceHideTimer, workspaceShowTimer, hovering)
         }
     }
 
@@ -544,11 +379,6 @@ ShellRoot {
     PanelWindow {
         id: statusBar
         visible: !root.isFullscreen
-        
-        // Hover state with delay (Ambxst pattern)
-        property bool hoverActive: false
-        property bool barIsHovered: false
-        property bool trayMenuActive: false
 
         anchors {
             bottom: true
@@ -557,7 +387,8 @@ ShellRoot {
         margins.bottom: 0
         margins.right: 0
 
-        implicitHeight: reveal ? 56 : 1
+        // Window size - always big enough for hover detection
+        implicitHeight: 56
         implicitWidth: statusBarContent.implicitWidth + 50
 
         WlrLayershell.layer: WlrLayer.Top
@@ -565,85 +396,28 @@ ShellRoot {
         exclusionMode: ExclusionMode.Ignore
 
         color: "transparent"
-        
-        // Reveal logic - use shared function
-        readonly property bool reveal: root.shouldRevealBar(hoverActive)
-        
-        // Timer to delay hiding after mouse leaves
-        Timer {
-            id: statusHideTimer
-            interval: 1000
-            repeat: false
-            onTriggered: {
-                if (!statusBar.barIsHovered && !statusBar.trayMenuActive && !statusHoverArea.containsMouse) {
-                    statusBar.hoverActive = false
-                }
-            }
-        }
-        
-        // Timer to delay showing when mouse enters edge
-        Timer {
-            id: statusShowTimer
-            interval: 500
-            repeat: false
-            onTriggered: {
-                statusBar.hoverActive = true
-                statusHideTimer.restart()
-            }
-        }
 
-        // Hover detection zone at bottom edge
+        // Hover detection zone
         MouseArea {
             id: statusHoverArea
-            z: 100
+            anchors.fill: parent
             hoverEnabled: true
             propagateComposedEvents: true
-            onPressed: (mouse) => mouse.accepted = false
-            // Pass wheel events through to children
-            onWheel: (wheel) => wheel.accepted = false
-            
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.rightMargin: 0
-            anchors.bottomMargin: 0
-            width: statusBarContent.implicitWidth + 24
-            height: 56  // Same as bar height to prevent false leave events
-            
-            onContainsMouseChanged: {
-                if (containsMouse) {
-                    if (!statusBar.hoverActive) {
-                        statusShowTimer.restart()
-                    }
-                } else {
-                    statusShowTimer.stop()
-                    if (statusBar.hoverActive && !statusBar.barIsHovered) {
-                        statusHideTimer.restart()
-                    }
-                }
-            }
+            acceptedButtons: Qt.NoButton
         }
 
         StatusBar {
             id: statusBarContent
-            z: 1  // Below the MouseArea
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.rightMargin: 6
             anchors.bottomMargin: 6
             parentWindow: statusBar
-            showBar: statusBar.reveal
+            mode: Config.statusBarMode
+            hasActiveWindows: !root.shouldRevealBar(false)
+            edgeHit: statusHoverArea.containsMouse
             onPowerRequested: mainBarContent.openView("power")
             onToolbarRequested: mainBarContent.openView("toolbar")
-            onBarHoverChanged: (hovering) => root.handleBarHover(statusBar, statusHideTimer, statusShowTimer, hovering)
-            onTrayMenuActiveChanged: (active) => {
-                statusBar.trayMenuActive = active
-                if (active) {
-                    statusHideTimer.stop()
-                    statusBar.hoverActive = true
-                } else {
-                    statusHideTimer.restart()
-                }
-            }
             // GNOME-like volume scroll - trigger MainBar volume overlay
             onVolumeScrollChanged: {
                 mainBarContent.showVolumeOverlay()
@@ -718,8 +492,8 @@ ShellRoot {
         screenWidth: root.screenWidth
         screenHeight: root.screenHeight
         horizontalAlign: "center"
-        // Margin changes: 0 when docked (discrete), 6 when floating
-        margin: mainBarWindow.barState === "discrete" ? 0 : 6
+        // Margin changes: 0 when docked (compact UI), 6 when floating
+        margin: mainBarBehavior.isCompact ? 0 : 6
         // Always visible - yOffset handles positioning off-screen when hidden
         backdropVisible: !root.isFullscreen
         yOffset: mainBarRegionContainer.yPosition  // Sync with slide animation

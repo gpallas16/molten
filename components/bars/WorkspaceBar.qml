@@ -4,43 +4,90 @@ import QtQuick.Controls
 import "../../globals"
 import "../effects"
 import "../behavior"
+import "../transforms"
 import "../widgets"
 
 Item {
     id: root
-    implicitWidth: layout.implicitWidth + 24
-    implicitHeight: 44
+    implicitWidth: barTransform.animatedWidth
+    implicitHeight: barTransform.animatedHeight
 
     signal launcherRequested()
     signal overviewRequested()
     signal barHoverChanged(bool hovering)
 
-    // Auto-hide state (controlled by parent)
-    property bool showBar: false
+    // ═══════════════════════════════════════════════════════════════
+    // BEHAVIOR MODE - Controls auto-hide behavior
+    // ═══════════════════════════════════════════════════════════════
     
-    // Y position for glass backdrop sync - use binding to always match transform
-    property real yPosition: slideTransform.y
+    /**
+     * Behavior mode for the bar
+     * @type {string} "floating" | "hidden" | "dynamic"
+     * - floating: Always visible
+     * - hidden: Hidden until edge hit or hover
+     * - dynamic: Shows on hover/activity, auto-hides
+     */
+    property string mode: "dynamic"
     
-    // Slide animation: translate Y when hiding
-    transform: Translate {
-        id: slideTransform
-        y: showBar ? 0 : (root.height + 20)
-        
-        Behavior on y {
-            NumberAnimation {
-                duration: 400
-                easing.type: showBar ? Easing.OutBack : Easing.InQuad
-                easing.overshoot: 1.2
-            }
-        }
+    /** Whether there are active windows (affects dynamic mode) */
+    property bool hasActiveWindows: false
+    
+    /** Edge hit trigger (e.g., mouse at screen edge) */
+    property bool edgeHit: false
+    
+    // Internal hover tracking
+    property bool _realHover: false
+    
+    /**
+     * Temporarily show the bar (e.g., on workspace change)
+     * Shows for hideDelay duration before auto-hiding
+     */
+    function showTemporarily() {
+        behavior.showTemporarily()
     }
     
+    // Behavior controller
+    BarBehavior {
+        id: behavior
+        mode: root.mode
+        barHovered: root._realHover
+        edgeHit: root.edgeHit
+        hasActiveWindows: root.hasActiveWindows
+    }
+    
+    // Computed visibility from behavior
+    readonly property bool showBar: behavior.barVisible
+    
+    // Reusable transformation controller for slide and size animations
+    BarTransform {
+        id: barTransform
+        target: root
+        showBar: root.showBar
+        expanded: false
+        discreteMode: root.compactMode
+        contentWidth: layout.implicitWidth
+        contentHeight: 44
+        
+        // Compact mode dimensions (just workspaces widget)
+        discreteWidth: workspacesWidget.implicitWidth + 16
+        discreteHeight: 24
+        normalHeight: 44
+        collapsedPadding: 24
+    }
+    
+    // Y position for glass backdrop sync - use binding to always match transform
+    property real yPosition: barTransform.slideY
+    
+    // Slide animation using BarTransform
+    transform: barTransform.slideTransform
+    
+    // Opacity follows showBar with matching duration
     opacity: showBar ? 1.0 : 0.0
     
     Behavior on opacity {
         NumberAnimation {
-            duration: showBar ? 300 : 200
-            easing.type: Easing.InOutQuad
+            duration: 400  // Match BarTransform.slideDuration
+            easing.type: showBar ? Easing.OutBack : Easing.InQuad
         }
     }
     
@@ -49,29 +96,29 @@ Item {
         id: adaptiveColors
         region: "left"
     }
-    
-    Behavior on opacity {
-        NumberAnimation {
-            duration: 200
-            easing.type: Easing.InOutQuad
-        }
-    }
 
     ShadowBorder {
-        radius: Theme.barRoundness
+        radius: barTransform.animatedRadius
     }
+    
+    // Whether we're in compact mode (minimal UI - just workspaces)
+    readonly property bool compactMode: behavior.isCompact
 
     RowLayout {
         id: layout
         anchors.centerIn: parent
         spacing: 6
 
-        // Start icon (app launcher)
+        // Start icon (app launcher) - hidden in compact mode
         Rectangle {
             width: 34
             height: 34
             radius: Theme.barRoundness / 2
             color: startMouse.containsMouse ? Theme.current.hover : "transparent"
+            visible: !root.compactMode
+            opacity: root.compactMode ? 0 : 1
+            
+            Behavior on opacity { NumberAnimation { duration: 200 } }
 
             Image {
                 anchors.centerIn: parent
@@ -98,12 +145,16 @@ Item {
             }
         }
 
-        // Overview button
+        // Overview button - hidden in compact mode
         Rectangle {
             width: 34
             height: 34
             radius: 10
             color: overviewMouse.containsMouse ? Theme.current.hover : "transparent"
+            visible: !root.compactMode
+            opacity: root.compactMode ? 0 : 1
+            
+            Behavior on opacity { NumberAnimation { duration: 200 } }
 
             Text {
                 anchors.centerIn: parent
@@ -121,7 +172,7 @@ Item {
             }
         }
 
-        // Workspaces Widget (Ambxst-style)
+        // Workspaces Widget - always visible
         WorkspacesWidget {
             id: workspacesWidget
             textColor: adaptiveColors.iconColor
@@ -130,6 +181,9 @@ Item {
     
     // Hover detection for the entire bar
     BarHoverDetector {
-        onHoverChanged: (hovering) => root.barHoverChanged(hovering)
+        onHoverChanged: (hovering) => {
+            root._realHover = hovering
+            root.barHoverChanged(hovering)
+        }
     }
 }

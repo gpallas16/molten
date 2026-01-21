@@ -1,0 +1,4 @@
+BarTransform 1.0 BarTransform.qml
+SizeAnimator 1.0 SizeAnimator.qml
+StackTransitions 1.0 StackTransitions.qml
+FadeAnimator 1.0 FadeAnimator.qml
