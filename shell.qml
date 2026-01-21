@@ -126,6 +126,30 @@ ShellRoot {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // EXCLUSIVE ZONE - Invisible bar to reserve screen space in floating mode
+    // ═══════════════════════════════════════════════════════════════
+    PanelWindow {
+        id: exclusiveZoneBar
+        visible: Config.mainBarMode === "floating" || 
+                 Config.workspaceBarMode === "floating" || 
+                 Config.statusBarMode === "floating"
+        
+        anchors {
+            bottom: true
+            left: true
+            right: true
+        }
+        
+        // Height of bar (44) + margin (6) = 50, minus some overlap
+        implicitHeight: 50
+        color: "transparent"
+        
+        WlrLayershell.layer: WlrLayer.Bottom  // Below everything, just for reserving space
+        WlrLayershell.namespace: "molten-exclusive"
+        exclusiveZone: 50
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // MAIN BAR - Dynamic Island (Ambxst-style: full screen window, main bar floats)
     // ═══════════════════════════════════════════════════════════════
     PanelWindow {
@@ -140,6 +164,8 @@ ShellRoot {
             left: true
             right: true
         }
+        // Negative margin to counteract exclusive zone push
+        margins.bottom: exclusiveZoneBar.visible ? -50 : 0
 
         color: "transparent"
 
@@ -194,7 +220,8 @@ ShellRoot {
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "molten-notch"
         WlrLayershell.keyboardFocus: mainBarContent.isExpanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-        exclusionMode: ExclusionMode.Ignore
+        // Note: Can't use exclusiveZone here - window is full-screen for click handling
+        // Side bars handle the exclusive zone reservation
 
         // Mask: full window when expanded, bar + edge trigger when collapsed
         mask: Region {
@@ -329,7 +356,8 @@ ShellRoot {
             bottom: true
             left: true
         }
-        margins.bottom: 0
+        // Negative margin to counteract exclusive zone push
+        margins.bottom: exclusiveZoneBar.visible ? -50 : 0
         margins.left: 0
 
         // Window size - always big enough for hover detection
@@ -338,7 +366,6 @@ ShellRoot {
 
         WlrLayershell.layer: WlrLayer.Top
         WlrLayershell.namespace: "molten-left"
-        exclusionMode: ExclusionMode.Ignore
 
         color: "transparent"
         
@@ -384,7 +411,8 @@ ShellRoot {
             bottom: true
             right: true
         }
-        margins.bottom: 0
+        // Negative margin to counteract exclusive zone push
+        margins.bottom: exclusiveZoneBar.visible ? -50 : 0
         margins.right: 0
 
         // Window size - always big enough for hover detection
@@ -393,7 +421,6 @@ ShellRoot {
 
         WlrLayershell.layer: WlrLayer.Top
         WlrLayershell.namespace: "molten-right"
-        exclusionMode: ExclusionMode.Ignore
 
         color: "transparent"
 

@@ -75,6 +75,8 @@ Item {
     
     // When entering floating state with active windows, start timer to return to discrete
     onInternalStateChanged: {
+        if (isExpanded) return  // Don't start timers while expanded
+        
         if (internalState === "floating" && hasActiveWindows && !barHovered && !popupActive && !isExpanded && !edgeHit) {
             discreteTimer.restart()
         }
@@ -115,6 +117,7 @@ Item {
     // React to hasActiveWindows changes (matters for dynamic and hidden modes)
     onHasActiveWindowsChanged: {
         if (mode === "floating" || mode === "discrete") return
+        if (isExpanded) return  // Don't change state while expanded
         
         if (!hasActiveWindows) {
             // No windows - go to floating
@@ -138,6 +141,8 @@ Item {
     
     // React to bar hover changes - THIS IS THE CORE BEHAVIOR
     onBarHoveredChanged: {
+        if (isExpanded) return  // Don't change state while expanded
+        
         if (barHovered) {
             discreteTimer.stop()
             
@@ -168,6 +173,8 @@ Item {
     
     // Edge hit brings bar back as floating (and keeps it there while edge is hit)
     onEdgeHitChanged: {
+        if (isExpanded) return  // Don't change state while expanded
+        
         if (edgeHit) {
             discreteTimer.stop()
             if (internalState === "discrete" || internalState === "hidden") {
@@ -195,10 +202,11 @@ Item {
         }
     }
     
-    // Expanded - switch to floating
+    // Expanded - switch to floating and stay there
     onIsExpandedChanged: {
         if (isExpanded) {
             discreteTimer.stop()
+            internalState = "floating"  // Force floating when expanded
         } else {
             var restState = getRestState()
             if (restState !== "floating" && !barHovered && !popupActive && !edgeHit) {
