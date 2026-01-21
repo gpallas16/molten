@@ -204,13 +204,23 @@ Item {
                             }
                         }
 
+                        // Tray icon with fallback
                         IconImage {
                             id: trayIcon
                             source: trayItem.modelData.icon
                             anchors.centerIn: parent
-                            width: parent.width
-                            height: parent.height
-                            smooth: true
+                            implicitWidth: trayItem.trayItemSize
+                            implicitHeight: trayItem.trayItemSize
+                            visible: status === Image.Ready
+                        }
+                        
+                        // Fallback icon when tray icon fails to load
+                        Text {
+                            anchors.centerIn: parent
+                            text: "●"
+                            font.pixelSize: 14
+                            color: adaptiveColors.iconColor
+                            visible: trayIcon.status !== Image.Ready
                         }
                     }
                 }

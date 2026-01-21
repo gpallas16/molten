@@ -511,6 +511,6 @@ ShellRoot {
             }
         }
         // Flat bottom in discrete mode (attached to edge)
-        flatBottom: mainBarContent.discreteFlatBottom
+        flatBottom: mainBarContent.discreteMode && !mainBarContent.screenNotchOpen
     }
 }
