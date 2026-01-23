@@ -19,6 +19,34 @@ Item {
         region: "notch"
     }
 
+    // Helper functions for toggle states
+    function getToggleState(prop) {
+        switch(prop) {
+            case "wifiEnabled": return Network.wifiEnabled ?? false
+            case "bluetoothEnabled": return Bluetooth.enabled ?? false
+            case "caffeineMode": return Caffeine.enabled ?? false
+            case "gameMode": return State.gameMode ?? false
+            default: return false
+        }
+    }
+    
+    function toggleProperty(prop) {
+        switch(prop) {
+            case "wifiEnabled": 
+                Network.toggleWifi()
+                break
+            case "bluetoothEnabled": 
+                Bluetooth.toggle()
+                break
+            case "caffeineMode": 
+                Caffeine.toggle()
+                break
+            case "gameMode": 
+                State.gameMode = !State.gameMode
+                break
+        }
+    }
+
     Column {
         id: contentColumn
         anchors.fill: parent
@@ -45,12 +73,14 @@ Item {
                 delegate: Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 70
+                    
+                    property bool isEnabled: root.getToggleState(modelData.prop)
 
                     Rectangle {
                         anchors.fill: parent
                         radius: 12
-                        color: State[modelData.prop] ? adaptiveColors.textColor : "transparent"
-                        opacity: State[modelData.prop] ? 0.15 : 0.08
+                        color: isEnabled ? adaptiveColors.textColor : "transparent"
+                        opacity: isEnabled ? 0.15 : 0.08
                         border.width: 1
                         border.color: adaptiveColors.textColor
                         
@@ -71,9 +101,9 @@ Item {
                         }
                         Text {
                             text: modelData.label
-                            color: State[modelData.prop] ? adaptiveColors.textColor : adaptiveColors.subtleTextColor
+                            color: isEnabled ? adaptiveColors.textColor : adaptiveColors.subtleTextColor
                             font.pixelSize: 10
-                            font.weight: State[modelData.prop] ? Font.DemiBold : Font.Normal
+                            font.weight: isEnabled ? Font.DemiBold : Font.Normal
                             anchors.horizontalCenter: parent.horizontalCenter
                             
                             Behavior on color {
@@ -85,14 +115,14 @@ Item {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: State[modelData.prop] = !State[modelData.prop]
+                        onClicked: root.toggleProperty(modelData.prop)
                     }
                 }
             }
         }
 
         // ═══════════════════════════════════════════════════════════════
-        // BRIGHTNESS SLIDER
+        // BRIGHTNESS SLIDER (Using Brightness Service)
         // ═══════════════════════════════════════════════════════════════
         Column {
             width: parent.width
@@ -113,7 +143,7 @@ Item {
                     Layout.fillWidth: true
                 }
                 Text {
-                    text: Math.round(State.brightness * 100) + "%"
+                    text: Math.round(Brightness.brightness * 100) + "%"
                     color: adaptiveColors.subtleTextColor
                     font.pixelSize: 12
                     font.family: "monospace"
@@ -138,7 +168,7 @@ Item {
                 // Progress fill
                 Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width * State.brightness
+                    width: parent.width * Brightness.brightness
                     height: 8
                     radius: 4
                     color: adaptiveColors.textColor
@@ -150,7 +180,7 @@ Item {
 
                 // Handle
                 Rectangle {
-                    x: Math.max(0, Math.min(parent.width - width, parent.width * State.brightness - width / 2))
+                    x: Math.max(0, Math.min(parent.width - width, parent.width * Brightness.brightness - width / 2))
                     anchors.verticalCenter: parent.verticalCenter
                     width: 20
                     height: 20
@@ -173,10 +203,8 @@ Item {
                     }
                     
                     function updateBrightness(mouse) {
-                        var newVal = Math.max(0.1, Math.min(1, (mouse.x + 4) / (width - 8)))
-                        State.brightness = newVal
-                        brightnessProc.command = ["brightnessctl", "set", Math.round(newVal * 100) + "%"]
-                        brightnessProc.running = true
+                        var newVal = Math.max(0.05, Math.min(1, (mouse.x + 4) / (width - 8)))
+                        Brightness.setBrightness(newVal)
                     }
                 }
             }
@@ -294,6 +322,113 @@ Item {
         }
 
         // ═══════════════════════════════════════════════════════════════
+        // MICROPHONE VOLUME SLIDER (Using Audio Service)
+        // ═══════════════════════════════════════════════════════════════
+        Column {
+            width: parent.width
+            spacing: 10
+
+            RowLayout {
+                width: parent.width
+
+                Text {
+                    id: micIconText
+                    text: Audio.micMuted ? "🎤❌" : "🎤"
+                    font.pixelSize: 16
+                    
+                    MouseArea {
+                        anchors.fill: parent
+                        anchors.margins: -4
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Audio.toggleMicMute()
+                    }
+                }
+                Text {
+                    text: "Microphone"
+                    color: adaptiveColors.textColor
+                    font.pixelSize: 13
+                    font.weight: Font.Medium
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text: Math.round(Audio.micVolume * 100) + "%"
+                    color: adaptiveColors.subtleTextColor
+                    font.pixelSize: 12
+                    font.family: "monospace"
+                }
+            }
+
+            // Custom slider
+            Item {
+                width: parent.width
+                height: 24
+
+                // Background track
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width
+                    height: 8
+                    radius: 4
+                    color: adaptiveColors.subtleTextColor
+                    opacity: 0.2
+                }
+
+                // Progress fill
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width * Audio.micVolume
+                    height: 8
+                    radius: 4
+                    color: Audio.micMuted ? adaptiveColors.subtleTextColor : adaptiveColors.textColor
+                    
+                    Behavior on width {
+                        NumberAnimation { duration: 50 }
+                    }
+                }
+
+                // Handle
+                Rectangle {
+                    x: Math.max(0, Math.min(parent.width - width, parent.width * Audio.micVolume - width / 2))
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 20
+                    height: 20
+                    radius: 10
+                    color: adaptiveColors.textColor
+                    
+                    Behavior on x {
+                        NumberAnimation { duration: 50 }
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    cursorShape: Qt.PointingHandCursor
+                    
+                    onPressed: (mouse) => updateMicVolume(mouse)
+                    onPositionChanged: (mouse) => {
+                        if (pressed) updateMicVolume(mouse)
+                    }
+                    
+                    // Scroll wheel support
+                    onWheel: (wheel) => {
+                        var currentVol = Audio.micVolume
+                        if (wheel.angleDelta.y > 0) {
+                            Audio.setMicVolume(Math.min(1, currentVol + 0.05))
+                        } else {
+                            Audio.setMicVolume(Math.max(0, currentVol - 0.05))
+                        }
+                    }
+                    
+                    function updateMicVolume(mouse) {
+                        var newVal = Math.max(0, Math.min(1, (mouse.x + 4) / (width - 8)))
+                        Audio.setMicVolume(newVal)
+                    }
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
         // QUICK TOOLS ROW
         // ═══════════════════════════════════════════════════════════════
         Row {
@@ -305,8 +440,8 @@ Item {
                 icon: "📷"
                 label: "Screenshot"
                 onClicked: {
-                    screenshotProc.running = true
                     root.closeRequested()
+                    Screenshot.capture("area")
                 }
             }
             
@@ -315,8 +450,8 @@ Item {
                 icon: "🔴"
                 label: "Record"
                 onClicked: {
-                    screenRecordProc.running = true
                     root.closeRequested()
+                    screenRecordDelayTimer.start()
                 }
             }
             
@@ -325,8 +460,8 @@ Item {
                 icon: "🎨"
                 label: "Color"
                 onClicked: {
-                    colorPickerProc.running = true
                     root.closeRequested()
+                    colorPickerDelayTimer.start()
                 }
             }
             
@@ -335,8 +470,8 @@ Item {
                 icon: "📝"
                 label: "OCR"
                 onClicked: {
-                    ocrProc.running = true
                     root.closeRequested()
+                    ocrDelayTimer.start()
                 }
             }
         }
@@ -717,29 +852,24 @@ Item {
     }
     
     // ═══════════════════════════════════════════════════════════════
-    // PROCESSES
+    // PROCESSES - Delay timers for tools that need UI to close first
     // ═══════════════════════════════════════════════════════════════
-    Process {
-        id: brightnessProc
+    
+    Timer {
+        id: screenRecordDelayTimer
+        interval: 300
+        onTriggered: Screenshot.startRecording()
     }
     
-    Process {
-        id: screenshotProc
-        command: ["bash", "-c", "grimblast --notify copy area"]
+    Timer {
+        id: colorPickerDelayTimer
+        interval: 300
+        onTriggered: Screenshot.pickColor()
     }
     
-    Process {
-        id: screenRecordProc
-        command: ["bash", "-c", "wf-recorder -g \"$(slurp)\" -f ~/Videos/recording-$(date +%Y%m%d-%H%M%S).mp4"]
-    }
-    
-    Process {
-        id: colorPickerProc
-        command: ["bash", "-c", "hyprpicker -a"]
-    }
-    
-    Process {
-        id: ocrProc
-        command: ["bash", "-c", "grim -g \"$(slurp)\" - | tesseract stdin stdout | wl-copy && notify-send 'OCR' 'Text copied to clipboard'"]
+    Timer {
+        id: ocrDelayTimer
+        interval: 300
+        onTriggered: Screenshot.captureOCR()
     }
 }

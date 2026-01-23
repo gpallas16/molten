@@ -11,6 +11,10 @@ Item {
     id: root
     implicitWidth: barTransform.animatedWidth
     implicitHeight: barTransform.animatedHeight
+    
+    // Explicit size for BarHoverDetector
+    width: barTransform.animatedWidth
+    height: barTransform.animatedHeight
 
     signal launcherRequested()
     signal overviewRequested()
@@ -32,9 +36,9 @@ Item {
     /** Whether there are active windows (affects dynamic mode) */
     property bool hasActiveWindows: false
     
-    /** Edge hit trigger (e.g., mouse at screen edge) */
-    property bool edgeHit: false
-    
+    /** Whether this bar is active (for disabling AdaptiveColors in fullscreen) */
+    property bool active: true
+
     // Internal hover tracking
     property bool _realHover: false
     
@@ -49,9 +53,9 @@ Item {
     // Behavior controller
     BarBehavior {
         id: behavior
+        debugName: "WorkspaceBar"
         mode: root.mode
         barHovered: root._realHover
-        edgeHit: root.edgeHit
         hasActiveWindows: root.hasActiveWindows
     }
     
@@ -75,9 +79,6 @@ Item {
         collapsedPadding: 24
     }
     
-    // Y position for glass backdrop sync - use binding to always match transform
-    property real yPosition: barTransform.slideY
-    
     // Slide animation using BarTransform
     transform: barTransform.slideTransform
     
@@ -91,10 +92,24 @@ Item {
         }
     }
     
+    // ═══════════════════════════════════════════════════════════════
+    // EMBEDDED GLASS BACKDROP - Auto-syncs with bar dimensions
+    // ═══════════════════════════════════════════════════════════════
+    EmbeddedGlassBackdrop {
+        backdropName: "left"
+        horizontalAlign: "left"
+        margin: 2
+        targetRadius: barTransform.animatedRadius
+        yOffset: barTransform.slideY
+        backdropVisible: root.active
+        startupDelay: 50
+    }
+    
     // Adaptive colors based on background
     AdaptiveColors {
         id: adaptiveColors
         region: "left"
+        active: root.active
     }
 
     ShadowBorder {

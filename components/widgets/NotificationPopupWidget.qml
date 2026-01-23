@@ -54,7 +54,8 @@ Column {
         delegate: Item {
             id: notifItem
             width: root.width
-            height: notifRow.implicitHeight + 16
+            // Fixed minimum height for notification item
+            height: Math.max(notifRow.implicitHeight + 32, 68)
             
             required property var modelData
             required property int index
@@ -72,7 +73,9 @@ Column {
             
             RowLayout {
                 id: notifRow
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
                 anchors.margins: 16
                 spacing: 10
                 

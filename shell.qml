@@ -3,13 +3,14 @@
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
+import Quickshell.Io
+import Quickshell.Services.Mpris
 import QtQuick
-import QtQuick.Layouts
 import "components"
-import "components/behavior"
 import "config"
 import "globals" as Root
 import "globals"
+import "services"
 
 ShellRoot {
     id: root
@@ -18,13 +19,62 @@ ShellRoot {
     property string currentScreen: "none"
     
     // ═══════════════════════════════════════════════════════════════
+    // WALLPAPER - Native wallpaper rendering (one per screen)
+    // ═══════════════════════════════════════════════════════════════
+    Variants {
+        model: Quickshell.screens
+        
+        Wallpaper {
+            required property var modelData
+            screen: modelData
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
     // KEYBIND HANDLER - Listen for Hyprland global shortcuts
     // ═══════════════════════════════════════════════════════════════
-    
+
     Connections {
         target: Root.KeybindHandler
         
         function onKeybindTriggered(action) {
+            // Reset activity timer on any keybind
+            root.resetActivityTimer()
+            
+            // Handle volume/brightness overlay triggers (don't toggle, just show overlay)
+            switch (action) {
+                case "volume_up":
+                case "volume_down":
+                case "volume_mute":
+                    mainBarContent.showVolumeOverlay()
+                    return
+                case "brightness_up":
+                case "brightness_down":
+                    mainBarContent.showBrightnessOverlay()
+                    return
+                // Screenshot actions - close any open UI first, then capture
+                case "screenshot_area":
+                    mainBarContent.closeView()
+                    Screenshot.capture("area")
+                    return
+                case "screenshot_screen":
+                    mainBarContent.closeView()
+                    Screenshot.capture("screen")
+                    return
+                case "screenshot_window":
+                    mainBarContent.closeView()
+                    Screenshot.capture("window")
+                    return
+                case "color_picker":
+                    mainBarContent.closeView()
+                    Screenshot.pickColor()
+                    return
+                case "screen_record":
+                    mainBarContent.closeView()
+                    Screenshot.startRecording()
+                    return
+            }
+            
             // Toggle behavior: if the requested view is already open, close it
             if (mainBarContent.currentView === action) {
                 mainBarContent.closeView()
@@ -47,8 +97,79 @@ ShellRoot {
                 case "live":
                     mainBarContent.openView("live")
                     break
+                case "clipboard":
+                    mainBarContent.openView("clipboard")
+                    break
                 default:
                     console.log("Unknown action:", action)
+            }
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // AUTO-SUSPEND - Sleep after 15 minutes of inactivity (if not caffeine mode)
+    // ═══════════════════════════════════════════════════════════════
+    
+    // Track last user activity
+    property real lastActivityTime: Date.now()
+    
+    function resetActivityTimer() {
+        lastActivityTime = Date.now()
+    }
+    
+    // Check if any media is currently playing (MPRIS)
+    readonly property bool mediaIsPlaying: {
+        var players = Mpris.players.values
+        for (var i = 0; i < players.length; i++) {
+            if (players[i].playbackState === MprisPlaybackState.Playing) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    // Check for inactivity every minute
+    Timer {
+        id: autoSuspendTimer
+        interval: 60000  // 1 minute
+        running: true
+        repeat: true
+        onTriggered: {
+            // Skip if caffeine mode is enabled (using the Caffeine service)
+            if (Caffeine.enabled) return
+            
+            // Skip if media is playing
+            if (root.mediaIsPlaying) {
+                root.resetActivityTimer()  // Reset timer while media is playing
+                return
+            }
+            
+            var idleTime = Date.now() - lastActivityTime
+            var fifteenMinutes = 15 * 60 * 1000  // 15 minutes in ms
+            
+            if (idleTime >= fifteenMinutes) {
+                console.log("Auto-suspend: 15 minutes idle, suspending...")
+                suspendProc.running = true
+                suspendProc.running = true
+            }
+        }
+    }
+    
+    // Process to suspend the system
+    Process {
+        id: suspendProc
+        command: ["systemctl", "suspend"]
+    }
+    
+    // Reset activity on Hyprland events
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) {
+            // Any Hyprland event counts as user activity
+            if (["activewindow", "focusedmon", "openwindow", "closewindow", 
+                 "workspace", "moveworkspace", "fullscreen", "urgent",
+                 "submap", "movewindow", "resizewindow"].includes(event.name)) {
+                root.resetActivityTimer()
             }
         }
     }
@@ -59,80 +180,44 @@ ShellRoot {
         if (!toplevel) return false
         return toplevel.fullscreen
     }
-    
-    // Screen dimensions - get from Hyprland monitor
-    property int screenWidth: {
-        var monitor = Hyprland.monitors.values[0]
-        return monitor ? monitor.width : 1920
-    }
-    property int screenHeight: {
-        var monitor = Hyprland.monitors.values[0]
-        return monitor ? monitor.height : 1080
-    }
-    
-    // Shared reveal logic for both bars
-    function shouldRevealBar(hoverActive) {
-        // Check if hovering first
-        if (hoverActive) return true
-        
-        // Check if current workspace has any windows
-        var currentWs = Root.State.activeWorkspace
-        var wsData = Hyprland.workspaces.values.find(function(ws) { return ws.id === currentWs })
-        
-        // Check if toplevels has any items
-        var hasToplevels = false
-        if (wsData && wsData.toplevels && wsData.toplevels.values && wsData.toplevels.values.length > 0) {
-            hasToplevels = true
-        }
-        
-        // If workspace is empty, always show
-        if (!wsData || !hasToplevels) return true
-        
-        // Otherwise, check if there's a focused window IN THIS WORKSPACE
-        var toplevel = ToplevelManager.activeToplevel
-        if (!toplevel) return true  // No toplevel, show bars
-        
-        // Check if the active toplevel is in the current workspace
-        var toplevelAddress = toplevel.HyprlandToplevel ? toplevel.HyprlandToplevel.address : null
-        
-        if (toplevelAddress) {
-            // Find the window in this workspace's toplevels
-            var isInCurrentWorkspace = false
-            if (wsData.toplevels && wsData.toplevels.values) {
-                for (var i = 0; i < wsData.toplevels.values.length; i++) {
-                    if (wsData.toplevels.values[i].address === toplevelAddress) {
-                        isInCurrentWorkspace = true
-                        break
-                    }
-                }
-            }
-            
-            // If the active toplevel is NOT in this workspace, show the bars
-            if (!isInCurrentWorkspace) return true
-        }
-        
-        // The toplevel is in this workspace, check if it's activated
-        return !toplevel.activated
-    }
-    
-    // When hovering the bar itself, keep it visible
-    function handleBarHover(barObj, hideTimer, showTimer, hovering) {
-        barObj.barIsHovered = hovering
-        if (hovering) {
-            hideTimer.stop()
-        } else {
-            hideTimer.restart()
-        }
-    }
 
+        // ═══════════════════════════════════════════════════════════════
+    // DUMMY GLASS WINDOW - Absorbs first-render bug
     // ═══════════════════════════════════════════════════════════════
-    // EXCLUSIVE ZONE - Invisible bar to reserve screen space in floating mode
+    FloatingWindow {
+        id: dummyGlassWindow
+        visible: !root.isFullscreen
+        title: "molten-glass-dummy"
+        
+        implicitWidth: 1
+        implicitHeight: 1
+        
+        color: "transparent"
+        
+        property bool windowReady: false
+        
+        Timer {
+            interval: 10
+            running: dummyGlassWindow.visible
+            onTriggered: {
+                dummyGlassWindow.windowReady = true
+                Hyprland.dispatch("resizewindowpixel exact 1 1,title:^molten-glass-dummy$")
+                Hyprland.dispatch("movewindowpixel exact -10 -10,title:^molten-glass-dummy$")
+            }
+        }
+        
+        Rectangle { width: 1; height: 1; color: "transparent" }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // EXCLUSIVE ZONE - Invisible bar to reserve screen space
+    // Visible for all modes except "hidden"
     // ═══════════════════════════════════════════════════════════════
     PanelWindow {
         id: exclusiveZoneBar
-        visible: Config.mainBarMode === "floating" || 
-                 Config.workspaceBarMode === "floating" || 
-                 Config.statusBarMode === "floating"
+        visible: Config.mainBarMode !== "hidden" || 
+                 Config.workspaceBarMode !== "hidden" || 
+                 Config.statusBarMode !== "hidden"
         
         anchors {
             bottom: true
@@ -140,13 +225,16 @@ ShellRoot {
             right: true
         }
         
-        // Height of bar (44) + margin (6) = 50, minus some overlap
-        implicitHeight: 50
+        // Minimal exclusive zone - just enough for compact bars
+        // Compact height (24) + tiny margin (2) = 26
+        readonly property int zoneHeight: 16
+        
+        implicitHeight: zoneHeight
         color: "transparent"
         
         WlrLayershell.layer: WlrLayer.Bottom  // Below everything, just for reserving space
         WlrLayershell.namespace: "molten-exclusive"
-        exclusiveZone: 50
+        exclusiveZone: zoneHeight
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -165,7 +253,7 @@ ShellRoot {
             right: true
         }
         // Negative margin to counteract exclusive zone push
-        margins.bottom: exclusiveZoneBar.visible ? -50 : 0
+        margins.bottom: exclusiveZoneBar.visible ? -exclusiveZoneBar.zoneHeight : 0
 
         color: "transparent"
 
@@ -200,20 +288,8 @@ ShellRoot {
             return false
         }
 
-        // Bar behavior controller - handles all visibility/state logic
-        BarBehavior {
-            id: mainBarBehavior
-            mode: Config.mainBarMode
-            barHovered: mainBarWindow.barIsHovered
-            edgeHit: mainBarHoverArea.containsMouse
-            popupActive: mainBarContent.notificationPopupActive || mainBarContent.volumeOverlayActive
-            isExpanded: mainBarContent.isExpanded
-            hasActiveWindows: mainBarWindow.hasActiveWindows
-            hideDelay: 1000
-        }
-        
-        // Convenience property for barState (backward compatibility)
-        readonly property string barState: mainBarBehavior.internalState
+        // Convenience property for barState (read from MainBar's internal behavior)
+        readonly property string barState: mainBarContent.internalState
         
         property bool barIsHovered: false
 
@@ -223,9 +299,9 @@ ShellRoot {
         // Note: Can't use exclusiveZone here - window is full-screen for click handling
         // Side bars handle the exclusive zone reservation
 
-        // Mask: full window when expanded, bar + edge trigger when collapsed
+        // Mask: full window when expanded, bar area otherwise
         mask: Region {
-            item: mainBarContent.isExpanded ? fullWindowMask : mainBarMaskContainer
+            item: mainBarContent.isExpanded ? fullWindowMask : mainBarMask
         }
 
         // Full window mask for catching outside clicks when expanded
@@ -234,22 +310,13 @@ ShellRoot {
             anchors.fill: parent
         }
         
-        // Combined mask for bar region + edge trigger area (so edge works when bar is hidden)
+        // Bar mask - covers just the bar area
         Item {
-            id: mainBarMaskContainer
+            id: mainBarMask
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            width: Math.max(mainBarRegionContainer.width, mainBarEdgeTrigger.width)
-            height: mainBarRegionContainer.height + 6 + 10  // bar + margin + edge trigger buffer
-        }
-        
-        // Edge trigger zone - always at bottom edge, always in mask
-        Item {
-            id: mainBarEdgeTrigger
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.bottom: parent.bottom
-            width: 200
-            height: 10
+            width: mainBarRegionContainer.width + 20
+            height: mainBarRegionContainer.height + 20
         }
 
         // Click outside expanded main bar to close (full window area)
@@ -268,14 +335,11 @@ ShellRoot {
             // Position based on state: discrete=docked, floating=with margin
             // Hidden state is now handled by MainBar's showBar property with slide animation
             anchors.bottomMargin: {
-                if (mainBarWindow.barState === "floating") return 6
+                if (mainBarWindow.barState === "floating") return 2
                 return 0  // discrete - docked (hidden uses showBar: false)
             }
             width: mainBarContent.implicitWidth
             height: mainBarContent.implicitHeight
-            
-            // Y position for glass backdrop sync - use MainBar's transform position
-            property real yPosition: mainBarContent.yPosition
             
             Behavior on anchors.bottomMargin {
                 NumberAnimation { duration: 300; easing.type: Easing.OutQuart }
@@ -285,63 +349,23 @@ ShellRoot {
                 id: mainBarContent
                 anchors.centerIn: parent
                 
-                // Pass compact state from BarBehavior
-                compactMode: mainBarBehavior.isCompact
-                
-                // Slide down when hidden (like WorkspaceBar and StatusBar)
-                showBar: mainBarBehavior.barVisible
+                // Behavior inputs - MainBar now has its own BarBehavior
+                mode: Config.mainBarMode
+                hasActiveWindows: mainBarWindow.hasActiveWindows
+                active: !root.isFullscreen
 
                 onCurrentViewChanged: {
                     root.currentScreen = currentView === "default" ? "none" : currentView
-                }
-
-                onIsExpandedChanged: {
-                    updateGlassBackdropRounding()
-                }
-                
-                onCompactModeChanged: {
-                    updateGlassBackdropRounding()
-                }
-                
-                function updateGlassBackdropRounding() {
-                    var radius
-                    if (isExpanded) {
-                        radius = Theme.containerRoundness
-                    } else if (compactMode) {
-                        radius = 12
-                    } else {
-                        radius = Theme.barRoundness
-                    }
-                    Hyprland.dispatch("exec hyprctl setprop title:^molten-glass-notch$ rounding " + Math.round(radius))
                 }
 
                 onCloseRequested: {
                     root.currentScreen = "none"
                 }
                 
-                // Popup state changes are communicated back to BarBehavior
-                onPopupActiveChanged: function(active) {
-                    // BarBehavior already watches this via the binding
-                }
                 onBarHoverChanged: (hovering) => {
                     mainBarWindow.barIsHovered = hovering
                 }
             }
-        }
-        
-        // Edge detection - BarBehavior monitors mainBarHoverArea.containsMouse via edgeHit property
-        MouseArea {
-            id: mainBarHoverArea
-            z: 100
-            hoverEnabled: true
-            propagateComposedEvents: true
-            onPressed: (mouse) => mouse.accepted = false
-            
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.bottom: parent.bottom
-            width: 200
-            height: 1
-            // containsMouse is read by BarBehavior.edgeHit
         }
     }
 
@@ -357,12 +381,12 @@ ShellRoot {
             left: true
         }
         // Negative margin to counteract exclusive zone push
-        margins.bottom: exclusiveZoneBar.visible ? -50 : 0
+        margins.bottom: exclusiveZoneBar.visible ? -exclusiveZoneBar.zoneHeight : 0
         margins.left: 0
 
-        // Window size - always big enough for hover detection
-        implicitHeight: 56
-        implicitWidth: workspaceBarContent.implicitWidth + 50
+        // Window size - just enough for bar + margin
+        implicitHeight: 60
+        implicitWidth: workspaceBarContent.implicitWidth + 20
 
         WlrLayershell.layer: WlrLayer.Top
         WlrLayershell.namespace: "molten-left"
@@ -377,24 +401,15 @@ ShellRoot {
             }
         }
 
-        // Hover detection zone at bottom edge
-        MouseArea {
-            id: workspaceHoverArea
-            anchors.fill: parent
-            hoverEnabled: true
-            propagateComposedEvents: true
-            acceptedButtons: Qt.NoButton
-        }
-
         WorkspaceBar {
             id: workspaceBarContent
             anchors.left: parent.left
             anchors.bottom: parent.bottom
             anchors.leftMargin: 6
-            anchors.bottomMargin: 6
+            anchors.bottomMargin: 2
             mode: Config.workspaceBarMode
-            hasActiveWindows: !root.shouldRevealBar(false)
-            edgeHit: workspaceHoverArea.containsMouse
+            hasActiveWindows: mainBarWindow.hasActiveWindows
+            active: !root.isFullscreen
             onLauncherRequested: mainBarContent.openView("launcher")
             onOverviewRequested: State.toggleOverview()
         }
@@ -412,37 +427,28 @@ ShellRoot {
             right: true
         }
         // Negative margin to counteract exclusive zone push
-        margins.bottom: exclusiveZoneBar.visible ? -50 : 0
+        margins.bottom: exclusiveZoneBar.visible ? -exclusiveZoneBar.zoneHeight : 0
         margins.right: 0
 
-        // Window size - always big enough for hover detection
-        implicitHeight: 56
-        implicitWidth: statusBarContent.implicitWidth + 50
+        // Window size - just enough for bar + margin
+        implicitHeight: 60
+        implicitWidth: statusBarContent.implicitWidth + 20
 
         WlrLayershell.layer: WlrLayer.Top
         WlrLayershell.namespace: "molten-right"
 
         color: "transparent"
 
-        // Hover detection zone
-        MouseArea {
-            id: statusHoverArea
-            anchors.fill: parent
-            hoverEnabled: true
-            propagateComposedEvents: true
-            acceptedButtons: Qt.NoButton
-        }
-
         StatusBar {
             id: statusBarContent
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.rightMargin: 6
-            anchors.bottomMargin: 6
+            anchors.bottomMargin: 2
             parentWindow: statusBar
             mode: Config.statusBarMode
-            hasActiveWindows: !root.shouldRevealBar(false)
-            edgeHit: statusHoverArea.containsMouse
+            hasActiveWindows: mainBarWindow.hasActiveWindows
+            active: !root.isFullscreen
             onPowerRequested: mainBarContent.openView("power")
             onToolbarRequested: mainBarContent.openView("toolbar")
             // GNOME-like volume scroll - trigger MainBar volume overlay
@@ -452,92 +458,5 @@ ShellRoot {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // GLASS BACKDROPS - FloatingWindows for liquid glass effect
-    // ═══════════════════════════════════════════════════════════════
 
-    // Dummy window to absorb the first-render bug (1px, invisible)
-    FloatingWindow {
-        id: dummyGlassWindow
-        visible: !root.isFullscreen
-        title: "molten-glass-dummy"
-        
-        implicitWidth: 1
-        implicitHeight: 1
-        
-        color: "transparent"
-        
-        property bool windowReady: false
-        
-        Timer {
-            interval: 10
-            running: dummyGlassWindow.visible
-            onTriggered: {
-                dummyGlassWindow.windowReady = true
-                Hyprland.dispatch("resizewindowpixel exact 1 1,title:^molten-glass-dummy$")
-                Hyprland.dispatch("movewindowpixel exact -10 -10,title:^molten-glass-dummy$")
-            }
-        }
-        
-        Rectangle { width: 1; height: 1; color: "transparent" }
-    }
-
-    // Workspace bar glass backdrop
-    GlassBackdrop {
-        backdropName: "left"
-        targetWidth: workspaceBarContent.implicitWidth
-        targetHeight: workspaceBarContent.implicitHeight
-        screenWidth: root.screenWidth
-        screenHeight: root.screenHeight
-        horizontalAlign: "left"
-        // Always visible - yOffset handles positioning off-screen when hidden
-        backdropVisible: true
-        yOffset: workspaceBarContent.yPosition  // Sync with slide animation
-        startupDelay: 50
-    }
-
-    // Status bar glass backdrop
-    GlassBackdrop {
-        backdropName: "right"
-        targetWidth: statusBarContent.implicitWidth
-        targetHeight: statusBarContent.implicitHeight
-        screenWidth: root.screenWidth
-        screenHeight: root.screenHeight
-        horizontalAlign: "right"
-        // Always visible - yOffset handles positioning off-screen when hidden
-        backdropVisible: true
-        yOffset: statusBarContent.yPosition  // Sync with slide animation
-        startupDelay: 100
-    }
-
-    // Main bar glass backdrop (declared last for proper render order)
-    GlassBackdrop {
-        id: mainBarGlassBackdrop
-        backdropName: "notch"
-        targetWidth: mainBarRegionContainer.width
-        targetHeight: mainBarRegionContainer.height
-        screenWidth: root.screenWidth
-        screenHeight: root.screenHeight
-        horizontalAlign: "center"
-        // Margin changes: 0 when docked (compact UI), 6 when floating
-        margin: mainBarBehavior.isCompact ? 0 : 6
-        // Always visible - yOffset handles positioning off-screen when hidden
-        backdropVisible: !root.isFullscreen
-        yOffset: mainBarRegionContainer.yPosition  // Sync with slide animation
-        startupDelay: 150
-        
-        // Sync discrete mode state from main bar
-        discreteMode: mainBarContent.discreteMode
-        targetRadius: {
-            if (mainBarContent.discreteMode && !mainBarContent.screenNotchOpen) {
-                return 12  // Discrete notch roundness
-            } else if (mainBarContent.screenNotchOpen) {
-                return Theme.containerRoundness
-            } else {
-                return Theme.barRoundness
-            }
-        }
-        // Flat bottom in discrete mode (attached to edge)
-        flatBottom: mainBarContent.discreteMode && !mainBarContent.screenNotchOpen
-    }
 }

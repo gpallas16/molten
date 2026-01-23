@@ -6,6 +6,9 @@ import Quickshell.Io
 Item {
     id: root
     
+    // Whether this component is active (disable in fullscreen)
+    property bool active: true
+    
     // Which region this component represents (left, right, notch)
     property string region: "notch"
     
@@ -33,11 +36,12 @@ Item {
     FileView {
         id: colorDataFile
         path: "/tmp/molten-adaptive-colors.json"
-        watchChanges: true
+        watchChanges: root.active
         
-        onFileChanged: reload()
+        onFileChanged: if (root.active) reload()
         
         onLoaded: {
+            if (!root.active) return
             try {
                 var data = JSON.parse(text())
                 if (data[root.region]) {
@@ -62,13 +66,13 @@ Item {
         }
     }
     
-    // Also poll periodically as backup
+    // Also poll periodically as backup (only when active)
     Timer {
         interval: 100
-        running: true
+        running: root.active
         repeat: true
         onTriggered: colorDataFile.reload()
     }
     
-    Component.onCompleted: colorDataFile.reload()
+    Component.onCompleted: if (active) colorDataFile.reload()
 }

@@ -1,3 +1,4 @@
 WorkspacesWidget 1.0 WorkspacesWidget.qml
 NotificationPopupWidget 1.0 NotificationPopupWidget.qml
 VolumeOverlayWidget 1.0 VolumeOverlayWidget.qml
+BrightnessOverlayWidget 1.0 BrightnessOverlayWidget.qml

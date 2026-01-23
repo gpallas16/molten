@@ -150,11 +150,17 @@ Singleton {
     property alias doNotDisturb: root._dndDeprecated
     property bool _dndDeprecated: false
 
-    // System
+    // System - these are now bound to services
     property real volume: 0.5
     property real brightness: 0.8
+    
+    // WiFi/Bluetooth - bound to Network and Bluetooth services
+    // Note: The services are imported in the files that need them
+    // These properties provide a unified interface
     property bool wifiEnabled: true
     property bool bluetoothEnabled: false
+    
+    // Caffeine mode - bound to Caffeine service
     property bool caffeineMode: false
     property bool gameMode: false
 

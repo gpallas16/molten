@@ -41,7 +41,7 @@ FloatingWindow {
         }
     }
     
-    visible: !State.isFullscreen && backdropVisible
+    visible: backdropVisible
     title: "molten-glass-" + backdropName
     
     // In notch style: ears extend to sides, same height as main body

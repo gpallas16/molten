@@ -17,13 +17,19 @@ This approach is simple, fast, and doesn't require external dependencies like `s
 
 ## Default Keybinds
 
-| Shortcut                   | Action                        |
-| -------------------------- | ----------------------------- |
-| `Super` or `Super + Space` | Open App Launcher             |
-| `Super + N`                | Open Notifications            |
-| `Super + T`                | Open Toolbar (Quick Settings) |
-| `Super + Shift + P`        | Open Power Menu               |
-| `Super + M`                | Open Live Activities/Media    |
+| Shortcut                   | Action                         |
+| -------------------------- | ------------------------------ |
+| `Super` or `Super + Space` | Open App Launcher              |
+| `Super + N`                | Open Notifications             |
+| `Super + T`                | Open Toolbar (Quick Settings)  |
+| `Super + Shift + P`        | Open Power Menu                |
+| `Super + M`                | Open Live Activities/Media     |
+| `Super + V`                | Open Clipboard History         |
+| `XF86AudioRaiseVolume`     | Volume Up (with overlay)       |
+| `XF86AudioLowerVolume`     | Volume Down (with overlay)     |
+| `XF86AudioMute`            | Toggle Mute (with overlay)     |
+| `XF86MonBrightnessUp`      | Brightness Up (with overlay)   |
+| `XF86MonBrightnessDown`    | Brightness Down (with overlay) |
 
 ## Customizing Shortcuts
 
@@ -43,6 +49,9 @@ Available actions:
 - `toolbar` - Quick settings toolbar
 - `power` - Power menu
 - `live` - Live activities/media controls
+- `clipboard` - Clipboard history
+- `volume_up` / `volume_down` / `volume_mute` - Volume overlay triggers
+- `brightness_up` / `brightness_down` - Brightness overlay triggers
 
 ### Method 2: Add to your Hyprland config
 
@@ -76,6 +85,7 @@ To add a custom action:
    ```
 
 2. **Handle it** in [`shell.qml`](shell.qml):
+
    ```qml
    Connections {
        target: Root.KeybindHandler

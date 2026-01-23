@@ -3,32 +3,26 @@ import QtQuick
 /**
  * BarBehavior - Reusable bar behavior controller
  * 
- * Provides visibility and UI state management for bars with 4 behavior modes:
- * 
- * - floating: Bar always visible with floating UI
- * - discrete: Bar shows compact UI, hides on hover, returns on hover leave
- * - hidden: Bar hidden until edge hit or hover, then shows as floating
- * - dynamic: No active windows = floating UI, active windows = discrete behavior
- * 
- * State machine (for dynamic mode with active windows):
- *   floating ──[timer expires]──> discrete
- *   discrete ──[hover]──────────> hidden (bar slides away)
- *   hidden ───[hover leaves]────> discrete (bar returns)
- *   hidden ───[edge hit]────────> floating
- *   any ──────[no windows]──────> floating
+ * MODES:
+ * - floating: Bar always visible, full UI
+ * - discrete: Bar compact by default, hover → floating, leave → discrete
+ * - hidden: Bar hidden by default, edge hit → shows temporarily
+ * - dynamic: No windows = floating, has windows = discrete behavior
  */
 Item {
     id: root
-    visible: false  // This is a non-visual item
+    visible: false
     width: 0
     height: 0
     
     // ═══════════════════════════════════════════════════════════════
-    // CONFIGURATION INPUTS
+    // INPUTS
     // ═══════════════════════════════════════════════════════════════
     
     property string mode: "dynamic"
+    property string debugName: "unknown"
     property bool barHovered: false
+    property bool zoneHovered: false
     property bool edgeHit: false
     property bool popupActive: false
     property bool isExpanded: false
@@ -36,196 +30,169 @@ Item {
     property int hideDelay: 1000
     
     // ═══════════════════════════════════════════════════════════════
-    // OUTPUT PROPERTIES
+    // OUTPUTS
     // ═══════════════════════════════════════════════════════════════
     
-    // The internal state: "floating", "discrete", "hidden"
     property string internalState: "floating"
-    
-    // Initialize state based on mode at startup
-    Component.onCompleted: {
-        if (mode === "hidden" && hasActiveWindows) {
-            internalState = "hidden"
-        } else if (mode === "discrete") {
-            internalState = "discrete"
-        } else {
-            internalState = "floating"
-        }
-    }
-    
-    // Whether the bar should be visible (hidden state = not visible)
     readonly property bool barVisible: internalState !== "hidden"
-    
-    /**
-     * Whether the bar should show compact UI.
-     * Each bar interprets "compact" visually however it wants:
-     * - MainBar: shrinks height to minimal notch
-     * - WorkspaceBar: hides launcher/overview buttons, shows only workspaces
-     * - StatusBar: hides status/power, shows only tray icons
-     * 
-     * Compact = true when: in discrete state (or hidden, for consistency)
-     * Compact = false when: in floating state
-     */
     readonly property bool isCompact: {
         if (isExpanded || popupActive) return false
         if (mode === "floating") return false
-        // All other modes: compact depends on internalState
-        return internalState === "discrete" || internalState === "hidden"
-    }
-    
-    // When entering floating state with active windows, start timer to return to discrete
-    onInternalStateChanged: {
-        if (isExpanded) return  // Don't start timers while expanded
-        
-        if (internalState === "floating" && hasActiveWindows && !barHovered && !popupActive && !isExpanded && !edgeHit) {
-            discreteTimer.restart()
-        }
+        return internalState === "discrete"
     }
     
     // ═══════════════════════════════════════════════════════════════
-    // STATE MACHINE
+    // HELPERS
     // ═══════════════════════════════════════════════════════════════
     
-    // Helper: get the "rest" state for current mode (state to return to when not interacting)
     function getRestState() {
         if (mode === "floating") return "floating"
-        // hidden mode: show floating on empty workspace, hidden when windows active
-        if (mode === "hidden") return hasActiveWindows ? "hidden" : "floating"
         if (mode === "discrete") return "discrete"
-        // dynamic: depends on active windows
+        if (mode === "hidden") return "hidden"
+        // dynamic: discrete when windows, floating when no windows
         return hasActiveWindows ? "discrete" : "floating"
     }
     
-    // Timer to return from floating to rest state
+    function isDiscreteActive() {
+        return mode === "discrete" || (mode === "dynamic" && hasActiveWindows)
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // INITIALIZATION
+    // ═══════════════════════════════════════════════════════════════
+    
+    Component.onCompleted: {
+        internalState = getRestState()
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // MODE CHANGES
+    // ═══════════════════════════════════════════════════════════════
+    
+    onModeChanged: {
+        internalState = getRestState()
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // DISCRETE MODE: Hover bar → floating, leave → discrete
+    // Uses debounce timers to prevent rapid toggling at edges
+    // ═══════════════════════════════════════════════════════════════
+    
     Timer {
-        id: discreteTimer
-        interval: root.hideDelay
+        id: hoverExpandTimer
+        interval: 80  // Short delay before expanding
         onTriggered: {
-            root._temporarilyShown = false
-            if (!root.popupActive && !root.isExpanded && !root.barHovered && !root.edgeHit) {
-                var restState = root.getRestState()
-                if (root.internalState === "floating" && restState !== "floating") {
-                    root.internalState = restState
-                }
+            if (root.barHovered && root.internalState === "discrete") {
+                root.internalState = "floating"
             }
         }
     }
     
-    // Track if showTemporarily was called (to avoid immediate hide on workspace switch)
-    property bool _temporarilyShown: false
-    
-    // React to hasActiveWindows changes (matters for dynamic and hidden modes)
-    onHasActiveWindowsChanged: {
-        if (mode === "floating" || mode === "discrete") return
-        if (isExpanded) return  // Don't change state while expanded
-        
-        if (!hasActiveWindows) {
-            // No windows - go to floating
-            discreteTimer.stop()
-            _temporarilyShown = false
-            if (internalState === "discrete" || internalState === "hidden") {
-                internalState = "floating"
-            }
-        } else {
-            // Has windows - go to rest state unless temporarily shown or hovered
-            var restState = getRestState()
-            if (internalState === "floating" && !barHovered && !popupActive && !isExpanded && !edgeHit) {
-                if (_temporarilyShown) {
-                    discreteTimer.restart()
-                } else {
-                    internalState = restState
-                }
+    Timer {
+        id: hoverCollapseTimer
+        interval: 150  // Slightly longer delay before collapsing
+        onTriggered: {
+            if (!root.barHovered && root.internalState === "floating" && root.isDiscreteActive()) {
+                root.internalState = "discrete"
             }
         }
     }
     
-    // React to bar hover changes - THIS IS THE CORE BEHAVIOR
     onBarHoveredChanged: {
-        if (isExpanded) return  // Don't change state while expanded
+        if (isExpanded || popupActive) return
         
-        if (barHovered) {
-            discreteTimer.stop()
-            
-            // Discrete + hover → Hidden (bar slides away to let user work)
-            if (internalState === "discrete") {
-                internalState = "hidden"
-            }
-            // Floating + hover → stay floating (user is interacting with bar)
-            
-        } else {
-            // Hover ended
-            var restState = getRestState()
-            
-            // Hidden + hover leaves → return to rest state
-            if (internalState === "hidden") {
-                if (!popupActive && !isExpanded) {
-                    internalState = restState
-                } else {
-                    internalState = "floating"
+        if (isDiscreteActive()) {
+            if (barHovered) {
+                // Cancel any pending collapse, start expand timer
+                hoverCollapseTimer.stop()
+                if (internalState === "discrete") {
+                    hoverExpandTimer.restart()
+                }
+            } else {
+                // Cancel any pending expand, start collapse timer
+                hoverExpandTimer.stop()
+                if (internalState === "floating") {
+                    hoverCollapseTimer.restart()
                 }
             }
-            // Floating + hover leaves → start timer to return to rest state
-            else if (internalState === "floating" && restState !== "floating" && !popupActive && !isExpanded && !edgeHit) {
-                discreteTimer.restart()
-            }
         }
     }
     
-    // Edge hit brings bar back as floating (and keeps it there while edge is hit)
+    // ═══════════════════════════════════════════════════════════════
+    // HIDDEN MODE: Edge hit shows bar temporarily
+    // ═══════════════════════════════════════════════════════════════
+    
     onEdgeHitChanged: {
-        if (isExpanded) return  // Don't change state while expanded
+        if (mode !== "hidden") return
+        if (isExpanded || popupActive) return
         
-        if (edgeHit) {
-            discreteTimer.stop()
-            if (internalState === "discrete" || internalState === "hidden") {
-                internalState = "floating"
-            }
-        } else {
-            // Edge left - start hide timer to return to rest state
-            var restState = getRestState()
-            if (internalState === "floating" && restState !== "floating" && !barHovered && !popupActive && !isExpanded) {
-                discreteTimer.restart()
-            }
+        if (edgeHit && internalState === "hidden") {
+            internalState = "floating"
         }
     }
     
-    // Popup active - switch to floating and stay there
+    onZoneHoveredChanged: {
+        if (mode !== "hidden") return
+        if (isExpanded || popupActive) return
+        
+        // Left zone → hide again
+        if (!zoneHovered && internalState === "floating") {
+            internalState = "hidden"
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // DYNAMIC MODE: Window changes
+    // ═══════════════════════════════════════════════════════════════
+    
+    onHasActiveWindowsChanged: {
+        if (mode !== "dynamic") return
+        if (isExpanded || popupActive) return
+        
+        // Only change if not currently hovered
+        if (!barHovered) {
+            internalState = hasActiveWindows ? "discrete" : "floating"
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // POPUP/EXPAND: Force floating while active
+    // ═══════════════════════════════════════════════════════════════
+    
     onPopupActiveChanged: {
         if (popupActive) {
             internalState = "floating"
-            discreteTimer.stop()
-        } else {
-            var restState = getRestState()
-            if (restState !== "floating" && !barHovered && !edgeHit) {
-                discreteTimer.restart()
-            }
+        } else if (!barHovered) {
+            internalState = getRestState()
         }
     }
     
-    // Expanded - switch to floating and stay there
     onIsExpandedChanged: {
         if (isExpanded) {
-            discreteTimer.stop()
-            internalState = "floating"  // Force floating when expanded
-        } else {
-            var restState = getRestState()
-            if (restState !== "floating" && !barHovered && !popupActive && !edgeHit) {
-                discreteTimer.restart()
-            }
+            internalState = "floating"
+        } else if (!barHovered) {
+            internalState = getRestState()
         }
     }
     
-    /**
-     * Temporarily show the bar (brings to floating, then auto-hides after hideDelay)
-     * Use this for events like workspace changes
-     */
+    // ═══════════════════════════════════════════════════════════════
+    // PUBLIC: Temporarily show bar (expand to floating temporarily)
+    // ═══════════════════════════════════════════════════════════════
+    
     function showTemporarily() {
-        discreteTimer.stop()
-        _temporarilyShown = true
+        if (mode === "floating") return  // Already always floating
+        
         internalState = "floating"
-        var restState = getRestState()
-        if (restState !== "floating") {
-            discreteTimer.restart()
+        tempTimer.restart()
+    }
+    
+    Timer {
+        id: tempTimer
+        interval: root.hideDelay
+        onTriggered: {
+            if (!root.popupActive && !root.isExpanded && !root.barHovered && !root.zoneHovered && !root.edgeHit) {
+                root.internalState = root.getRestState()
+            }
         }
     }
 }

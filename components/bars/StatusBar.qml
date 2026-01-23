@@ -13,6 +13,10 @@ Item {
     id: root
     implicitWidth: barTransform.animatedWidth
     implicitHeight: barTransform.animatedHeight
+    
+    // Explicit size for BarHoverDetector
+    width: barTransform.animatedWidth
+    height: barTransform.animatedHeight
 
     signal powerRequested()
     signal toolbarRequested()
@@ -39,9 +43,9 @@ Item {
     /** Whether there are active windows (affects dynamic mode) */
     property bool hasActiveWindows: false
     
-    /** Edge hit trigger (e.g., mouse at screen edge) */
-    property bool edgeHit: false
-    
+    /** Whether this bar is active (for disabling AdaptiveColors in fullscreen) */
+    property bool active: true
+
     // Internal hover tracking
     property bool _realHover: false
     property bool _trayMenuActive: false
@@ -57,9 +61,9 @@ Item {
     // Behavior controller
     BarBehavior {
         id: behavior
+        debugName: "StatusBar"
         mode: root.mode
         barHovered: root._realHover
-        edgeHit: root.edgeHit
         popupActive: root._trayMenuActive
         hasActiveWindows: root.hasActiveWindows
     }
@@ -81,15 +85,12 @@ Item {
         contentWidth: mainRow.implicitWidth
         contentHeight: 44
         
-        // Compact mode dimensions (just tray icons)
-        discreteWidth: trayLayout.implicitWidth + 24
+        // Compact mode dimensions (tray icons + volume indicator)
+        discreteWidth: trayLayout.implicitWidth + 24 + (compactVolumeIndicator.visible ? compactVolumeIndicator.width + 8 : 0)
         discreteHeight: 24
         normalHeight: 44
         collapsedPadding: 0
     }
-    
-    // Y position for glass backdrop sync - use binding to always match transform
-    property real yPosition: barTransform.slideY
     
     // Slide animation using BarTransform
     transform: barTransform.slideTransform
@@ -104,10 +105,24 @@ Item {
         }
     }
     
+    // ═══════════════════════════════════════════════════════════════
+    // EMBEDDED GLASS BACKDROP - Auto-syncs with bar dimensions
+    // ═══════════════════════════════════════════════════════════════
+    EmbeddedGlassBackdrop {
+        backdropName: "right"
+        horizontalAlign: "right"
+        margin: 2
+        targetRadius: barTransform.animatedRadius
+        yOffset: barTransform.slideY
+        backdropVisible: root.active
+        startupDelay: 100
+    }
+    
     // Adaptive colors based on background
     AdaptiveColors {
         id: adaptiveColors
         region: "right"
+        active: root.active
     }
 
     ShadowBorder {
@@ -228,6 +243,43 @@ Item {
             }
         }
 
+        // Volume indicator for compact mode - scrollable like GNOME (positioned after tray)
+        Item {
+            id: compactVolumeIndicator
+            width: 22
+            height: root.compactMode ? 24 : 44
+            visible: root.compactMode
+            
+            Text {
+                anchors.centerIn: parent
+                text: {
+                    if (root.volumeMuted || root.currentVolume === 0) return "🔇"
+                    if (root.currentVolume < 0.33) return "🔉"
+                    return "🔊"
+                }
+                font.pixelSize: 14
+                color: adaptiveColors.iconColor
+            }
+            
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                
+                onClicked: Audio.toggleMute()
+                
+                onWheel: function(wheel) {
+                    if (wheel.angleDelta.y > 0) {
+                        Audio.incrementVolume()
+                    } else {
+                        Audio.decrementVolume()
+                    }
+                    root.volumeScrollChanged()
+                }
+            }
+        }
+
         // Quick status island with GNOME-like scroll volume control - hidden in compact mode
         Item {
             width: statusLayout.implicitWidth + 20
@@ -291,7 +343,7 @@ Item {
                     
                     Text {
                         anchors.centerIn: parent
-                        text: State.wifiEnabled ? "📶" : "📵"
+                        text: Network.wifiEnabled ? (Network.wifiConnected ? "📶" : "📡") : "📵"
                         font.pixelSize: 15
                         color: adaptiveColors.iconColor
                     }
@@ -301,11 +353,11 @@ Item {
                 Item {
                     width: 28
                     height: 28
-                    visible: State.bluetoothEnabled !== undefined ? State.bluetoothEnabled : false
+                    visible: Bluetooth.enabled
                     
                     Text {
                         anchors.centerIn: parent
-                        text: "🔷"
+                        text: Bluetooth.connected ? "🔷" : "📳"
                         font.pixelSize: 13
                         color: adaptiveColors.iconColor
                     }

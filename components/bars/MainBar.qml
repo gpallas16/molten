@@ -41,33 +41,47 @@ Item {
     id: notchContainer
 
     // ═══════════════════════════════════════════════════════════════
-    // PUBLIC API - Properties controlled by parent
+    // BEHAVIOR MODE - Controls auto-hide behavior
     // ═══════════════════════════════════════════════════════════════
     
     /**
-     * Compact mode - controlled by parent's BarBehavior.isCompact
-     * @type {bool}
-     * @default false
-     * 
-     * When true, bar shows minimal notch with just time and notification count.
-     * When false, bar shows full UI with weather, time, notifications.
-     * 
-     * Each bar type interprets compactMode differently:
-     * - MainBar: shrinks height to minimal notch
-     * - WorkspaceBar: hides launcher/overview buttons
-     * - StatusBar: hides tray/power button
+     * Behavior mode for the bar
+     * @type {string} "floating" | "discrete" | "hidden" | "dynamic"
      */
-    property bool compactMode: false
+    property string mode: "dynamic"
+    
+    /** Whether there are active windows (affects dynamic mode) */
+    property bool hasActiveWindows: false
+    
+    /** Whether this bar is active (for disabling AdaptiveColors in fullscreen) */
+    property bool active: true
+
+    // Internal hover tracking
+    property bool _realHover: false
     
     /**
-     * Controls bar visibility via slide animation
-     * @type {bool}
-     * @default true
-     * 
-     * When false, bar slides down off-screen. Used by BarBehavior
-     * to hide bar in "hidden" internal state.
+     * Temporarily show the bar (e.g., on activity/events)
      */
-    property bool showBar: true
+    function showTemporarily() {
+        behavior.showTemporarily()
+    }
+    
+    // Behavior controller - handles all visibility/state logic
+    BarBehavior {
+        id: behavior
+        debugName: "MainBar"
+        mode: notchContainer.mode
+        barHovered: notchContainer._realHover
+        popupActive: notchContainer.notificationPopupActive || notchContainer.volumeOverlayActive || notchContainer.brightnessOverlayActive
+        isExpanded: notchContainer.isExpanded
+        hasActiveWindows: notchContainer.hasActiveWindows
+        hideDelay: 1000
+    }
+    
+    // Computed from behavior
+    readonly property bool compactMode: behavior.isCompact
+    readonly property bool showBar: behavior.barVisible
+    readonly property string internalState: behavior.internalState
     
     // ═══════════════════════════════════════════════════════════════
     // DERIVED STATE - Computed from compactMode
@@ -102,8 +116,11 @@ Item {
     /** True when volume overlay is visible (triggered by showVolumeOverlay()) */
     property bool volumeOverlayActive: false
     
+    /** True when brightness overlay is visible (triggered by showBrightnessOverlay()) */
+    property bool brightnessOverlayActive: false
+    
     /** Combined state: true when bar is expanded for any reason */
-    readonly property bool screenNotchOpen: isExpanded || volumeOverlayActive || notificationPopupActive
+    readonly property bool screenNotchOpen: isExpanded || volumeOverlayActive || brightnessOverlayActive || notificationPopupActive
     
     // ═══════════════════════════════════════════════════════════════
     // SIGNALS - Communication with parent
@@ -133,8 +150,9 @@ Item {
     signal popupActiveChanged(bool active)
     
     // Auto-emit popup changes to parent
-    onNotificationPopupActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive)
-    onVolumeOverlayActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive)
+    onNotificationPopupActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive || brightnessOverlayActive)
+    onVolumeOverlayActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive || brightnessOverlayActive)
+    onBrightnessOverlayActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive || brightnessOverlayActive)
     
     // ═══════════════════════════════════════════════════════════════
     // PUBLIC METHODS
@@ -147,13 +165,27 @@ Item {
      * volume feedback. Auto-hides after 2 seconds of inactivity.
      */
     function showVolumeOverlay() {
+        brightnessOverlayActive = false  // Hide brightness if showing
         volumeOverlayActive = true
         volumeHideTimer.restart()
     }
     
     /**
+     * Show brightness overlay with auto-hide timer
+     * 
+     * Called externally (e.g., on brightness key) to display GNOME-style
+     * brightness feedback. Auto-hides after 2 seconds of inactivity.
+     */
+    function showBrightnessOverlay() {
+        volumeOverlayActive = false  // Hide volume if showing
+        brightnessOverlayActive = true
+        brightnessHideTimer.restart()
+        Brightness.refresh()  // Refresh brightness value from system
+    }
+    
+    /**
      * Open an expanded screen view
-     * @param {string} viewName - One of: "launcher", "live", "notifications", "toolbar", "power"
+     * @param {string} viewName - One of: "launcher", "live", "notifications", "toolbar", "power", "clipboard"
      */
     function openView(viewName) {
         if (currentView === viewName) return
@@ -210,11 +242,22 @@ Item {
     }
     
     // ═══════════════════════════════════════════════════════════════
-    // TRANSFORM CONTROLLERS - Visual transformations
+    // BRIGHTNESS OVERLAY TIMER
     // ═══════════════════════════════════════════════════════════════
     
-    /** Y position for glass backdrop sync - tracks slide transform */
-    property real yPosition: barTransform.slideY
+    /**
+     * Timer to auto-hide brightness overlay after inactivity
+     * Restarts on each brightness interaction
+     */
+    Timer {
+        id: brightnessHideTimer
+        interval: 2000  // 2 seconds
+        onTriggered: brightnessOverlayActive = false
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // TRANSFORM CONTROLLERS - Visual transformations
+    // ═══════════════════════════════════════════════════════════════
     
     /**
      * BarTransform - Calculates dimensions and slide animation
@@ -251,7 +294,7 @@ Item {
      * SizeAnimator - Provides smooth animated dimensions
      * 
      * Wraps the target dimensions with animation behaviors.
-     * Handles special cases: notification popup and volume overlay
+     * Handles special cases: notification popup, volume and brightness overlay
      * override normal dimensions.
      */
     SizeAnimator {
@@ -259,24 +302,29 @@ Item {
         duration: notchContainer.animDuration
         expanded: screenNotchOpen
         
-        // Width: popup > volume > normal transform
+        // Width: popup > volume > brightness > normal transform
         targetWidth: {
             if (notificationPopupActive && currentView === "default") {
                 return notificationPopupWidth
             } else if (volumeOverlayActive && currentView === "default") {
                 return volumeOverlayWidth
+            } else if (brightnessOverlayActive && currentView === "default") {
+                return brightnessOverlayWidth
             } else {
                 return barTransform.barWidth
             }
         }
         
-        // Height: popup (dynamic) > volume > normal transform
+        // Height: popup (dynamic) > volume > brightness > normal transform
         targetHeight: {
             if (notificationPopupActive && currentView === "default") {
                 var contentHeight = stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitHeight : 0
-                return contentHeight + 24
+                // Use base height as minimum to ensure notification is visible
+                return Math.max(contentHeight + 24, notificationPopupBaseHeight)
             } else if (volumeOverlayActive && currentView === "default") {
                 return volumeOverlayHeight
+            } else if (brightnessOverlayActive && currentView === "default") {
+                return brightnessOverlayHeight
             } else {
                 return barTransform.barHeight
             }
@@ -317,14 +365,21 @@ Item {
     /** Fade animator for default floating row */
     FadeAnimator {
         id: defaultFade
-        show: floatingMode && !volumeOverlayActive && !notificationPopupActive
+        show: floatingMode && !volumeOverlayActive && !brightnessOverlayActive && !notificationPopupActive
         duration: notchContainer.animDuration / 2
     }
     
     /** Fade animator for discrete mode row */
     FadeAnimator {
         id: discreteFade
-        show: discreteMode && !volumeOverlayActive && !notificationPopupActive
+        show: discreteMode && !volumeOverlayActive && !brightnessOverlayActive && !notificationPopupActive
+        duration: notchContainer.animDuration / 2
+    }
+    
+    /** Fade animator for brightness overlay visibility */
+    FadeAnimator {
+        id: brightnessFade
+        show: brightnessOverlayActive && !volumeOverlayActive && !notificationPopupActive
         duration: notchContainer.animDuration / 2
     }
     
@@ -348,10 +403,16 @@ Item {
     readonly property int normalHeight: 44
     
     /** Width of volume overlay */
-    readonly property int volumeOverlayWidth: 280
+    readonly property int volumeOverlayWidth: 320
     
     /** Height of volume overlay */
     readonly property int volumeOverlayHeight: 44
+    
+    /** Width of brightness overlay */
+    readonly property int brightnessOverlayWidth: 320
+    
+    /** Height of brightness overlay */
+    readonly property int brightnessOverlayHeight: 44
     
     /** Width of notification popup */
     readonly property int notificationPopupWidth: 380
@@ -375,6 +436,32 @@ Item {
     AdaptiveColors {
         id: adaptiveColors
         region: "notch"
+        active: notchContainer.active
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // EMBEDDED GLASS BACKDROP - Auto-syncs with bar dimensions
+    // ═══════════════════════════════════════════════════════════════
+    EmbeddedGlassBackdrop {
+        backdropName: "notch"
+        horizontalAlign: "center"
+        margin: notchContainer.compactMode ? 0 : 6
+        // Use explicit dimensions since MainBar uses SizeAnimator for animated sizes
+        explicitWidth: sizeAnimator.animatedWidth
+        explicitHeight: sizeAnimator.animatedHeight
+        targetRadius: {
+            if (notchContainer.discreteMode && !notchContainer.screenNotchOpen) {
+                return 12  // Discrete notch roundness
+            } else if (notchContainer.screenNotchOpen) {
+                return Theme.containerRoundness
+            } else {
+                return Theme.barRoundness
+            }
+        }
+        flatBottom: notchContainer.discreteMode && !notchContainer.screenNotchOpen
+        yOffset: barTransform.slideY
+        backdropVisible: notchContainer.active
+        startupDelay: 150
     }
     
     // ═══════════════════════════════════════════════════════════════
@@ -397,6 +484,10 @@ Item {
     
     /** Final animated height from SizeAnimator */
     implicitHeight: sizeAnimator.animatedHeight + (screenNotchOpen ? animationTrigger * 0 : 0)
+    
+    // Explicit size for BarHoverDetector (anchors.fill requires explicit size)
+    width: sizeAnimator.animatedWidth
+    height: sizeAnimator.animatedHeight
 
     // ═══════════════════════════════════════════════════════════════
     // VISUAL ELEMENTS
@@ -475,7 +566,10 @@ Item {
                 return defaultRow.implicitWidth
             }
             implicitHeight: {
-                if (notificationPopupActive) return notificationPopupColumn.implicitHeight
+                if (notificationPopupActive) {
+                    // Use minimum height to ensure visibility while content loads
+                    return Math.max(notificationPopupColumn.implicitHeight, notificationPopupBaseHeight - 24)
+                }
                 if (volumeOverlayActive) return 36
                 if (discreteMode) return 20
                 return 36
@@ -531,6 +625,29 @@ Item {
                 onVolumeIncrementRequested: Audio.incrementVolume()
                 onVolumeDecrementRequested: Audio.decrementVolume()
                 onInteracted: volumeHideTimer.restart()
+            }
+
+            /**
+             * Brightness Overlay - GNOME-style brightness feedback
+             * 
+             * Shows brightness icon, slider bar, and percentage.
+             * Interactive: click/drag slider, scroll to adjust.
+             * Auto-hides after 2 seconds of inactivity.
+             */
+            BrightnessOverlayWidget {
+                id: brightnessOverlayRow
+                anchors.centerIn: parent
+                visible: brightnessFade.actualVisible
+                opacity: brightnessFade.animatedOpacity
+                
+                brightness: Brightness.brightness
+                textColor: adaptiveColors.textColor
+                subtleTextColor: adaptiveColors.subtleTextColor
+                
+                onBrightnessChangeRequested: (v) => Brightness.setBrightness(v)
+                onBrightnessIncrementRequested: Brightness.incrementBrightness()
+                onBrightnessDecrementRequested: Brightness.decrementBrightness()
+                onInteracted: brightnessHideTimer.restart()
             }
 
             /**
@@ -624,8 +741,7 @@ Item {
             Row {
                 id: discreteRow
                 anchors.centerIn: parent
-                anchors.verticalCenterOffset: -1  // Slight offset since attached to bottom
-                spacing: 10
+                 spacing: 10
                 visible: discreteFade.actualVisible
                 opacity: discreteFade.animatedOpacity
 
@@ -686,7 +802,8 @@ Item {
         "live": "../../screens/LiveScreen.qml",
         "notifications": "../../screens/NotificationScreen.qml",
         "toolbar": "../../screens/ToolbarScreen.qml",
-        "power": "../../screens/PowerScreen.qml"
+        "power": "../../screens/PowerScreen.qml",
+        "clipboard": "../../screens/ClipboardScreen.qml"
     })
 
     /**
@@ -721,10 +838,13 @@ Item {
     /**
      * BarHoverDetector - Detects mouse hover over the bar
      * 
-     * Emits barHoverChanged signal for parent to update BarBehavior.
-     * Used for discrete mode toggle on hover.
+     * Sets _realHover for internal BarBehavior.
+     * Also emits barHoverChanged signal for backwards compatibility.
      */
     BarHoverDetector {
-        onHoverChanged: (hovering) => notchContainer.barHoverChanged(hovering)
+        onHoverChanged: (hovering) => {
+            notchContainer._realHover = hovering
+            notchContainer.barHoverChanged(hovering)
+        }
     }
 }
