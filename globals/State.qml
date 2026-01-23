@@ -311,9 +311,9 @@ Singleton {
         command: ["hyprctl", "dispatch", "exit"]
     }
 
-    // App launching
+    // App launching - uses hyprctl to ensure app starts on active workspace
     function launchApp(desktopFile) {
-        launchProc.command = ["gtk-launch", desktopFile]
+        launchProc.command = ["hyprctl", "dispatch", "exec", "gtk-launch " + desktopFile]
         launchProc.running = true
     }
     Process {
