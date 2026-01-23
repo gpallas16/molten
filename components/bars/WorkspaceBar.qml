@@ -2,110 +2,126 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import "../../globals"
+import "../../globals" as Root
 import "../effects"
 import "../behavior"
 import "../transforms"
 import "../widgets"
 
+/**
+ * WorkspaceBar - Left-side bar with launcher, overview, and workspaces
+ * 
+ * Follows the same pattern as MainBar for expandable screen support.
+ */
 Item {
     id: root
-    implicitWidth: barTransform.animatedWidth
-    implicitHeight: barTransform.animatedHeight
+    implicitWidth: sizeAnimator.animatedWidth
+    implicitHeight: sizeAnimator.animatedHeight
     
-    // Explicit size for BarHoverDetector
-    width: barTransform.animatedWidth
-    height: barTransform.animatedHeight
+    width: sizeAnimator.animatedWidth
+    height: sizeAnimator.animatedHeight
 
-    signal launcherRequested()
     signal overviewRequested()
     signal barHoverChanged(bool hovering)
+    signal closeRequested()
+    
+    // Screen navigation
+    property string currentView: "default"
+    property bool isExpanded: currentView !== "default"
+    
+    readonly property int animDuration: Root.State.animDuration
 
     // ═══════════════════════════════════════════════════════════════
-    // BEHAVIOR MODE - Controls auto-hide behavior
+    // BEHAVIOR MODE
     // ═══════════════════════════════════════════════════════════════
     
-    /**
-     * Behavior mode for the bar
-     * @type {string} "floating" | "hidden" | "dynamic"
-     * - floating: Always visible
-     * - hidden: Hidden until edge hit or hover
-     * - dynamic: Shows on hover/activity, auto-hides
-     */
     property string mode: "dynamic"
-    
-    /** Whether there are active windows (affects dynamic mode) */
     property bool hasActiveWindows: false
-    
-    /** Whether this bar is active (for disabling AdaptiveColors in fullscreen) */
     property bool active: true
-
-    // Internal hover tracking
     property bool _realHover: false
     
-    /**
-     * Temporarily show the bar (e.g., on workspace change)
-     * Shows for hideDelay duration before auto-hiding
-     */
     function showTemporarily() {
         behavior.showTemporarily()
     }
     
-    // Behavior controller
     BarBehavior {
         id: behavior
         debugName: "WorkspaceBar"
         mode: root.mode
         barHovered: root._realHover
         hasActiveWindows: root.hasActiveWindows
+        isExpanded: root.isExpanded
     }
     
-    // Computed visibility from behavior
     readonly property bool showBar: behavior.barVisible
+    readonly property bool compactMode: behavior.isCompact
     
-    // Reusable transformation controller for slide and size animations
+    // ═══════════════════════════════════════════════════════════════
+    // TRANSFORM CONTROLLERS
+    // ═══════════════════════════════════════════════════════════════
+    
     BarTransform {
         id: barTransform
         target: root
         showBar: root.showBar
-        expanded: false
+        expanded: root.isExpanded
         discreteMode: root.compactMode
-        contentWidth: layout.implicitWidth
-        contentHeight: 44
+        contentWidth: stackContainer.width
+        contentHeight: stackContainer.height
+        animDuration: root.animDuration
         
-        // Compact mode dimensions (just workspaces widget)
-        discreteWidth: workspacesWidget.implicitWidth + 16
+        discreteWidth: 100
         discreteHeight: 24
         normalHeight: 44
         collapsedPadding: 24
+        expandedPadding: 32
+        
+        discreteRadius: 12
+        normalRadius: Theme.barRoundness
+        expandedRadius: Theme.containerRoundness
     }
     
-    // Slide animation using BarTransform
+    SizeAnimator {
+        id: sizeAnimator
+        duration: root.animDuration
+        expanded: root.isExpanded
+        targetWidth: barTransform.barWidth
+        targetHeight: barTransform.barHeight
+        targetRadius: barTransform.barRadius
+    }
+    
+    StackTransitions {
+        id: stackTransitions
+        duration: root.animDuration
+    }
+    
     transform: barTransform.slideTransform
     
-    // Opacity follows showBar with matching duration
     opacity: showBar ? 1.0 : 0.0
-    
     Behavior on opacity {
         NumberAnimation {
-            duration: 400  // Match BarTransform.slideDuration
+            duration: 400
             easing.type: showBar ? Easing.OutBack : Easing.InQuad
         }
     }
     
     // ═══════════════════════════════════════════════════════════════
-    // EMBEDDED GLASS BACKDROP - Auto-syncs with bar dimensions
+    // VISUAL ELEMENTS
     // ═══════════════════════════════════════════════════════════════
+    
     EmbeddedGlassBackdrop {
         backdropName: "left"
         horizontalAlign: "left"
-        margin: 2
-        targetRadius: barTransform.animatedRadius
+        margin: root.compactMode ? 0 : 6
+        explicitWidth: sizeAnimator.animatedWidth
+        explicitHeight: sizeAnimator.animatedHeight
+        targetRadius: sizeAnimator.animatedRadius
+        flatBottom: root.compactMode && !root.isExpanded
         yOffset: barTransform.slideY
         backdropVisible: root.active
         startupDelay: 50
     }
     
-    // Adaptive colors based on background
     AdaptiveColors {
         id: adaptiveColors
         region: "left"
@@ -113,88 +129,173 @@ Item {
     }
 
     ShadowBorder {
-        radius: barTransform.animatedRadius
+        radius: sizeAnimator.animatedRadius
+        flatBottom: barTransform.flatBottom && !root.isExpanded
     }
     
-    // Whether we're in compact mode (minimal UI - just workspaces)
-    readonly property bool compactMode: behavior.isCompact
+    // ═══════════════════════════════════════════════════════════════
+    // SCREEN NAVIGATION
+    // ═══════════════════════════════════════════════════════════════
+    
+    function openView(viewName) {
+        if (currentView === viewName) return
+        if (!screenViews[viewName]) return
 
-    RowLayout {
-        id: layout
+        var props = { screenSource: screenViews[viewName] }
+
+        if (currentView === "default") {
+            stackViewInternal.push(screenLoaderComponent, props)
+        } else {
+            stackViewInternal.replace(screenLoaderComponent, props)
+        }
+        currentView = viewName
+    }
+    
+    function closeView() {
+        if (currentView === "default") return
+        stackViewInternal.pop()
+        currentView = "default"
+        closeRequested()
+    }
+    
+    readonly property var screenViews: ({
+        "launcher": "../../screens/AppLauncher.qml"
+    })
+    
+    Component {
+        id: screenLoaderComponent
+        Loader {
+            property string screenSource: ""
+            source: screenSource
+            onLoaded: {
+                if (item && item.closeRequested) item.closeRequested.connect(root.closeView)
+                if (item) item.forceActiveFocus()
+            }
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // STACK CONTAINER
+    // ═══════════════════════════════════════════════════════════════
+    
+    Item {
+        id: stackContainer
         anchors.centerIn: parent
-        spacing: 6
+        width: stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitWidth + (root.isExpanded ? 32 : 0) : 0
+        height: stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitHeight + (root.isExpanded ? 32 : 0) : 0
+        clip: true
 
-        // Start icon (app launcher) - hidden in compact mode
-        Rectangle {
-            width: 34
-            height: 34
-            radius: Theme.barRoundness / 2
-            color: startMouse.containsMouse ? Theme.current.hover : "transparent"
-            visible: !root.compactMode
-            opacity: root.compactMode ? 0 : 1
-            
-            Behavior on opacity { NumberAnimation { duration: 200 } }
+        StackView {
+            id: stackViewInternal
+            anchors.fill: parent
+            anchors.margins: root.isExpanded ? 16 : 0
+            initialItem: defaultViewComponent
 
-            Image {
-                anchors.centerIn: parent
-                source: "image://icon/nix-snowflake"
-                sourceSize: Qt.size(22, 22)
-                width: 22
-                height: 22
-                visible: status === Image.Ready
-            }
-            Text {
-                anchors.centerIn: parent
-                text: "❄"
-                font.pixelSize: 18
-                color: adaptiveColors.iconColor
-                visible: parent.children[0].status !== Image.Ready
-            }
-
-            MouseArea {
-                id: startMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.launcherRequested()
-            }
-        }
-
-        // Overview button - hidden in compact mode
-        Rectangle {
-            width: 34
-            height: 34
-            radius: 10
-            color: overviewMouse.containsMouse ? Theme.current.hover : "transparent"
-            visible: !root.compactMode
-            opacity: root.compactMode ? 0 : 1
-            
-            Behavior on opacity { NumberAnimation { duration: 200 } }
-
-            Text {
-                anchors.centerIn: parent
-                text: "▦"
-                font.pixelSize: 16
-                color: adaptiveColors.iconColor
-            }
-
-            MouseArea {
-                id: overviewMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.overviewRequested()
-            }
-        }
-
-        // Workspaces Widget - always visible
-        WorkspacesWidget {
-            id: workspacesWidget
-            textColor: adaptiveColors.iconColor
+            pushEnter: stackTransitions.pushEnter
+            pushExit: stackTransitions.pushExit
+            popEnter: stackTransitions.popEnter
+            popExit: stackTransitions.popExit
+            replaceEnter: stackTransitions.replaceEnter
+            replaceExit: stackTransitions.replaceExit
         }
     }
     
-    // Hover detection for the entire bar
+    // ═══════════════════════════════════════════════════════════════
+    // DEFAULT VIEW
+    // ═══════════════════════════════════════════════════════════════
+    
+    Component {
+        id: defaultViewComponent
+        Item {
+            implicitWidth: root.compactMode ? compactRow.implicitWidth : floatingRow.implicitWidth
+            implicitHeight: root.compactMode ? 20 : 36
+
+            // Compact mode - just workspaces
+            Row {
+                id: compactRow
+                anchors.centerIn: parent
+                spacing: 6
+                visible: root.compactMode
+                opacity: root.compactMode ? 1 : 0
+
+                WorkspacesWidget {
+                    textColor: adaptiveColors.iconColor
+                }
+            }
+
+            // Floating mode - launcher + overview + workspaces
+            RowLayout {
+                id: floatingRow
+                anchors.centerIn: parent
+                spacing: 6
+                visible: !root.compactMode
+                opacity: root.compactMode ? 0 : 1
+
+                // Launcher button
+                Rectangle {
+                    Layout.preferredWidth: 34
+                    Layout.preferredHeight: 34
+                    radius: Theme.barRoundness / 2
+                    color: launcherMouse.containsMouse ? Theme.current.hover : "transparent"
+
+                    Image {
+                        anchors.centerIn: parent
+                        source: "image://icon/nix-snowflake"
+                        sourceSize: Qt.size(22, 22)
+                        width: 22
+                        height: 22
+                        visible: status === Image.Ready
+                    }
+                    Text {
+                        anchors.centerIn: parent
+                        text: "❄"
+                        font.pixelSize: 18
+                        color: adaptiveColors.iconColor
+                        visible: parent.children[0].status !== Image.Ready
+                    }
+
+                    MouseArea {
+                        id: launcherMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.openView("launcher")
+                    }
+                }
+
+                // Overview button
+                Rectangle {
+                    Layout.preferredWidth: 34
+                    Layout.preferredHeight: 34
+                    radius: 10
+                    color: overviewMouse.containsMouse ? Theme.current.hover : "transparent"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "▦"
+                        font.pixelSize: 16
+                        color: adaptiveColors.iconColor
+                    }
+
+                    MouseArea {
+                        id: overviewMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.overviewRequested()
+                    }
+                }
+
+                // Workspaces widget
+                WorkspacesWidget {
+                    textColor: adaptiveColors.iconColor
+                }
+            }
+        }
+    }
+    
+    Keys.onEscapePressed: if (isExpanded) closeView()
+    
     BarHoverDetector {
         onHoverChanged: (hovering) => {
             root._realHover = hovering

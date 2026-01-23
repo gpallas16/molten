@@ -80,24 +80,48 @@ ShellRoot {
                 mainBarContent.closeView()
                 return
             }
+            // Also check workspace and status bar current views
+            if (workspaceBarContent.currentView === action) {
+                workspaceBarContent.closeView()
+                return
+            }
+            if (statusBarContent.currentView === action) {
+                statusBarContent.closeView()
+                return
+            }
             
             switch (action) {
                 case "launcher":
-                    mainBarContent.openView("launcher")
+                    // Close other bars if open
+                    mainBarContent.closeView()
+                    statusBarContent.closeView()
+                    workspaceBarContent.openView("launcher")
                     break
                 case "notifications":
-                    mainBarContent.openView("notifications")
+                    // Notifications merged into live screen
+                    workspaceBarContent.closeView()
+                    statusBarContent.closeView()
+                    mainBarContent.openView("live")
                     break
                 case "toolbar":
-                    mainBarContent.openView("toolbar")
+                    // Close other bars if open
+                    mainBarContent.closeView()
+                    workspaceBarContent.closeView()
+                    statusBarContent.openView("toolbar")
                     break
                 case "power":
+                    workspaceBarContent.closeView()
+                    statusBarContent.closeView()
                     mainBarContent.openView("power")
                     break
                 case "live":
+                    workspaceBarContent.closeView()
+                    statusBarContent.closeView()
                     mainBarContent.openView("live")
                     break
                 case "clipboard":
+                    workspaceBarContent.closeView()
+                    statusBarContent.closeView()
                     mainBarContent.openView("clipboard")
                     break
                 default:
@@ -379,19 +403,48 @@ ShellRoot {
         anchors {
             bottom: true
             left: true
+            top: workspaceBarContent.isExpanded
+            right: workspaceBarContent.isExpanded
         }
         // Negative margin to counteract exclusive zone push
         margins.bottom: exclusiveZoneBar.visible ? -exclusiveZoneBar.zoneHeight : 0
         margins.left: 0
 
-        // Window size - just enough for bar + margin
-        implicitHeight: 60
-        implicitWidth: workspaceBarContent.implicitWidth + 20
+        // Window size - use -1 when expanded (anchors control size)
+        implicitHeight: workspaceBarContent.isExpanded ? -1 : 60
+        implicitWidth: workspaceBarContent.isExpanded ? -1 : (workspaceBarContent.implicitWidth + 20)
 
-        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.layer: workspaceBarContent.isExpanded ? WlrLayer.Overlay : WlrLayer.Top
         WlrLayershell.namespace: "molten-left"
+        WlrLayershell.keyboardFocus: workspaceBarContent.isExpanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
         color: "transparent"
+        
+        // Mask: full window when expanded, bar area otherwise
+        mask: Region {
+            item: workspaceBarContent.isExpanded ? workspaceBarFullMask : workspaceBarMask
+        }
+        
+        Item {
+            id: workspaceBarFullMask
+            anchors.fill: parent
+        }
+        
+        Item {
+            id: workspaceBarMask
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            width: workspaceBarRegionContainer.width + 20
+            height: workspaceBarRegionContainer.height + 20
+        }
+        
+        // Click outside to close
+        MouseArea {
+            anchors.fill: parent
+            z: -1
+            visible: workspaceBarContent.isExpanded
+            onClicked: workspaceBarContent.closeView()
+        }
         
         // Auto-reveal when workspace changes
         Connections {
@@ -401,17 +454,23 @@ ShellRoot {
             }
         }
 
-        WorkspaceBar {
-            id: workspaceBarContent
+        Item {
+            id: workspaceBarRegionContainer
             anchors.left: parent.left
             anchors.bottom: parent.bottom
             anchors.leftMargin: 6
             anchors.bottomMargin: 2
-            mode: Config.workspaceBarMode
-            hasActiveWindows: mainBarWindow.hasActiveWindows
-            active: !root.isFullscreen
-            onLauncherRequested: mainBarContent.openView("launcher")
-            onOverviewRequested: State.toggleOverview()
+            width: workspaceBarContent.implicitWidth
+            height: workspaceBarContent.implicitHeight
+            
+            WorkspaceBar {
+                id: workspaceBarContent
+                anchors.centerIn: parent
+                mode: Config.workspaceBarMode
+                hasActiveWindows: mainBarWindow.hasActiveWindows
+                active: !root.isFullscreen
+                onOverviewRequested: State.toggleOverview()
+            }
         }
     }
 
@@ -425,35 +484,73 @@ ShellRoot {
         anchors {
             bottom: true
             right: true
+            top: statusBarContent.isExpanded
+            left: statusBarContent.isExpanded
         }
         // Negative margin to counteract exclusive zone push
         margins.bottom: exclusiveZoneBar.visible ? -exclusiveZoneBar.zoneHeight : 0
         margins.right: 0
 
-        // Window size - just enough for bar + margin
-        implicitHeight: 60
-        implicitWidth: statusBarContent.implicitWidth + 20
+        // Window size - use -1 when expanded (anchors control size)
+        implicitHeight: statusBarContent.isExpanded ? -1 : 60
+        implicitWidth: statusBarContent.isExpanded ? -1 : (statusBarContent.implicitWidth + 20)
 
-        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.layer: statusBarContent.isExpanded ? WlrLayer.Overlay : WlrLayer.Top
         WlrLayershell.namespace: "molten-right"
+        WlrLayershell.keyboardFocus: statusBarContent.isExpanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
         color: "transparent"
+        
+        // Mask: full window when expanded, bar area otherwise
+        mask: Region {
+            item: statusBarContent.isExpanded ? statusBarFullMask : statusBarMask
+        }
+        
+        Item {
+            id: statusBarFullMask
+            anchors.fill: parent
+        }
+        
+        Item {
+            id: statusBarMask
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            width: statusBarRegionContainer.width + 20
+            height: statusBarRegionContainer.height + 20
+        }
+        
+        // Click outside to close
+        MouseArea {
+            anchors.fill: parent
+            z: -1
+            visible: statusBarContent.isExpanded
+            onClicked: statusBarContent.closeView()
+        }
 
-        StatusBar {
-            id: statusBarContent
+        Item {
+            id: statusBarRegionContainer
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.rightMargin: 6
             anchors.bottomMargin: 2
-            parentWindow: statusBar
-            mode: Config.statusBarMode
-            hasActiveWindows: mainBarWindow.hasActiveWindows
-            active: !root.isFullscreen
-            onPowerRequested: mainBarContent.openView("power")
-            onToolbarRequested: mainBarContent.openView("toolbar")
-            // GNOME-like volume scroll - trigger MainBar volume overlay
-            onVolumeScrollChanged: {
-                mainBarContent.showVolumeOverlay()
+            width: statusBarContent.implicitWidth
+            height: statusBarContent.implicitHeight
+            
+            StatusBar {
+                id: statusBarContent
+                anchors.centerIn: parent
+                parentWindow: statusBar
+                mode: Config.statusBarMode
+                hasActiveWindows: mainBarWindow.hasActiveWindows
+                active: !root.isFullscreen
+                onPowerRequested: {
+                    statusBarContent.closeView()
+                    mainBarContent.openView("power")
+                }
+                // GNOME-like volume scroll - trigger MainBar volume overlay
+                onVolumeScrollChanged: {
+                    mainBarContent.showVolumeOverlay()
+                }
             }
         }
     }

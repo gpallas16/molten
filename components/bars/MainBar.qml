@@ -798,10 +798,7 @@ Item {
 
     /** Screen view mapping - Maps view names to QML file paths */
     readonly property var screenViews: ({
-        "launcher": "../../screens/AppLauncher.qml",
         "live": "../../screens/LiveScreen.qml",
-        "notifications": "../../screens/NotificationScreen.qml",
-        "toolbar": "../../screens/ToolbarScreen.qml",
         "power": "../../screens/PowerScreen.qml",
         "clipboard": "../../screens/ClipboardScreen.qml"
     })
