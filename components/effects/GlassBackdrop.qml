@@ -2,184 +2,215 @@ import QtQuick
 import Quickshell
 import Quickshell.Hyprland
 import "../../globals"
-import "../effects"
 
-// Reusable glass backdrop window for liquid glass effect
-FloatingWindow {
+/**
+ * GlassBackdrop - Unified blur window + content container
+ * 
+ * Contains both the FloatingWindow (for Hyprland blur) AND the content area.
+ * They share the SAME animated size/radius - zero sync needed.
+ */
+Item {
     id: root
     
-    // Required properties
+    // Required
     required property string backdropName
-    required property real targetWidth
-    required property real targetHeight
-    required property int screenWidth
-    required property int screenHeight
     
-    // Position mode: "left", "right", "center"
-    property string horizontalAlign: "left"
+    // Content goes here
+    default property alias content: contentArea.data
+    property alias contentItem: contentArea
+    
+    // Shape inputs - these are the TARGET values
+    property real radius: 16
+    property int animationDuration: 300
+    property int contentPadding: 16
+    
+    // Position
+    property string horizontalAlign: "center"
     property int margin: 6
-    property int startupDelay: 50
-    
-    // Y offset for animation (e.g., slide up/down)
     property real yOffset: 0
     
-    // Visibility control
+    // Visibility
     property bool backdropVisible: true
+    property int startupDelay: 50
     
-    // Discrete mode support
-    property bool discreteMode: false
-    property real targetRadius: 12
-    property bool flatBottom: false
-    property bool notchStyle: false
-    property real notchCornerSize: 12
+    // Screen (from parent)
+    property int screenWidth: 1920
+    property int screenHeight: 1080
     
-    // Update Hyprland window rounding when targetRadius changes
-    onTargetRadiusChanged: {
-        if (windowReady) {
-            var titlePattern = "title:^molten-glass-" + backdropName + "$"
-            Hyprland.dispatch("exec hyprctl setprop " + titlePattern + " rounding " + Math.round(targetRadius))
-        }
+    // ═══════════════════════════════════════════════════════════════
+    // TARGET SIZE - From content (no animation here)
+    // ═══════════════════════════════════════════════════════════════
+    readonly property real targetWidth: contentArea.children.length > 0 && contentArea.children[0].implicitWidth > 0 
+                   ? contentArea.children[0].implicitWidth + contentPadding * 2 
+                   : 100 + contentPadding * 2
+    readonly property real targetHeight: contentArea.children.length > 0 && contentArea.children[0].implicitHeight > 0 
+                    ? contentArea.children[0].implicitHeight + contentPadding * 2 
+                    : 36 + contentPadding * 2
+    
+    // ═══════════════════════════════════════════════════════════════
+    // ANIMATED VALUES - Single source of truth for BOTH blur and content
+    // ═══════════════════════════════════════════════════════════════
+    property real _animWidth: targetWidth
+    property real _animHeight: targetHeight
+    property real _animRadius: radius
+    property real _animPadding: contentPadding
+    
+    Behavior on _animWidth {
+        NumberAnimation { duration: root.animationDuration; easing.type: Easing.OutQuart }
+    }
+    Behavior on _animHeight {
+        NumberAnimation { duration: root.animationDuration; easing.type: Easing.OutQuart }
+    }
+    Behavior on _animRadius {
+        NumberAnimation { duration: root.animationDuration; easing.type: Easing.OutQuart }
+    }
+    Behavior on _animPadding {
+        NumberAnimation { duration: root.animationDuration; easing.type: Easing.OutQuart }
     }
     
-    visible: backdropVisible
-    title: "molten-glass-" + backdropName
+    // Root item uses animated size
+    implicitWidth: _animWidth
+    implicitHeight: _animHeight
+    width: _animWidth
+    height: _animHeight
     
-    // In notch style: ears extend to sides, same height as main body
-    implicitWidth: notchStyle ? targetWidth + (notchCornerSize * 2) : targetWidth
-    implicitHeight: targetHeight  // Height stays same - ears are beside, not below
-    
-    color: "transparent"
-    
-    mask: Region { item: maskItem }
-    
-    property int lastX: -1
-    property int lastY: -1
-    property int lastW: -1
-    property int lastH: -1
-    property bool windowReady: false
-    
-    Timer {
-        interval: root.startupDelay
-        running: root.visible
-        onTriggered: {
-            root.windowReady = true
-            root.updatePosition()
+    // ═══════════════════════════════════════════════════════════════
+    // FLOATING WINDOW - For Hyprland blur effect
+    // Uses the SAME animated values as content
+    // ═══════════════════════════════════════════════════════════════
+    FloatingWindow {
+        id: blurWindow
+        visible: root.backdropVisible
+        title: "molten-glass-" + root.backdropName
+        color: "transparent"
+        
+        // Use animated size
+        implicitWidth: root._animWidth
+        implicitHeight: root._animHeight
+        
+        mask: Region { item: blurMask }
+        
+        // Mask with animated radius
+        Rectangle {
+            id: blurMask
+            anchors.fill: parent
+            radius: root._animRadius
+            visible: false
+        }
+        
+        // Visual with animated radius
+        Rectangle {
+            id: blurVisual
+            anchors.fill: parent
+            radius: root._animRadius
+            color: adaptiveColors.backgroundIsDark ? 
+                   Qt.rgba(0, 0, 0, 0.15) : 
+                   Qt.rgba(1, 1, 1, 0.15)
+            
+            Behavior on color {
+                ColorAnimation { duration: 200 }
+            }
+        }
+        
+        // Position tracking
+        property int lastX: -1
+        property int lastY: -1
+        property int lastW: -1
+        property int lastH: -1
+        property bool windowReady: false
+        
+        Timer {
+            interval: root.startupDelay
+            running: blurWindow.visible
+            onTriggered: {
+                blurWindow.windowReady = true
+                blurWindow.updatePosition()
+                blurWindow.updateRounding()
+            }
+        }
+        
+        // Update Hyprland rounding when animated radius changes
+        onVisibleChanged: {
+            if (visible && windowReady) updateRounding()
+        }
+        
+        Connections {
+            target: root
+            function on_animRadiusChanged() { 
+                if (blurWindow.windowReady) blurWindow.updateRounding() 
+            }
+        }
+        
+        function updateRounding() {
             var titlePattern = "title:^molten-glass-" + root.backdropName + "$"
-            Hyprland.dispatch("exec hyprctl setprop " + titlePattern + " rounding " + Math.round(root.targetRadius))
+            Hyprland.dispatch("exec hyprctl setprop " + titlePattern + " rounding " + Math.round(root._animRadius))
+        }
+        
+        // React to animated values changing
+        Connections {
+            target: root
+            function on_animWidthChanged() { if (blurWindow.windowReady) blurWindow.updatePosition() }
+            function on_animHeightChanged() { if (blurWindow.windowReady) blurWindow.updatePosition() }
+            function onYOffsetChanged() { if (blurWindow.windowReady) blurWindow.updatePosition() }
+        }
+        
+        // Continuous update for smooth animation
+        Timer {
+            interval: 16
+            repeat: true
+            running: blurWindow.visible && blurWindow.windowReady
+            onTriggered: blurWindow.updatePosition()
+        }
+        
+        function updatePosition() {
+            if (!visible || !windowReady) return
+            
+            // Use animated values
+            var w = Math.round(root._animWidth)
+            var h = Math.round(root._animHeight)
+            
+            if (w <= 0 || h <= 0) return
+            
+            var x, y
+            
+            switch (root.horizontalAlign) {
+                case "right":
+                    x = root.screenWidth - w - root.margin
+                    break
+                case "center":
+                    x = Math.round((root.screenWidth - w) / 2)
+                    break
+                default:
+                    x = root.margin
+            }
+            
+            y = root.screenHeight - h - root.margin + Math.round(root.yOffset)
+            
+            if (y < 0) return
+            
+            if (x !== lastX || y !== lastY || w !== lastW || h !== lastH) {
+                lastX = x; lastY = y; lastW = w; lastH = h
+                var titlePattern = "title:^molten-glass-" + root.backdropName + "$"
+                Hyprland.dispatch("movewindowpixel exact " + x + " " + y + "," + titlePattern)
+                Hyprland.dispatch("resizewindowpixel exact " + w + " " + h + "," + titlePattern)
+            }
         }
     }
     
-    onImplicitWidthChanged: if (windowReady) updatePosition()
-    onImplicitHeightChanged: if (windowReady) updatePosition()
-    
-    Timer {
-        interval: 16
-        repeat: true
-        running: root.visible && root.windowReady
-        onTriggered: root.updatePosition()
-    }
-    
-    function updatePosition() {
-        if (!visible || !windowReady) return
-        
-        var w = Math.round(implicitWidth)
-        var h = Math.round(implicitHeight)
-        
-        if (w <= 0 || h <= 0) return
-        
-        var x, y
-        
-        // For notch style, center calculation uses the MAIN BODY width
-        var centerWidth = notchStyle ? targetWidth : w
-        
-        switch (horizontalAlign) {
-            case "right":
-                x = screenWidth - w - margin
-                break
-            case "center":
-                // Center the main body, ears extend beyond
-                x = Math.round((screenWidth - centerWidth) / 2) - (notchStyle ? notchCornerSize : 0)
-                break
-            default:
-                x = margin
-        }
-        
-        y = screenHeight - h - margin + Math.round(yOffset)
-        
-        if (y < 0) return
-        
-        if (x !== lastX || y !== lastY || w !== lastW || h !== lastH) {
-            lastX = x; lastY = y; lastW = w; lastH = h
-            var titlePattern = "title:^molten-glass-" + backdropName + "$"
-            Hyprland.dispatch("movewindowpixel exact " + x + " " + y + "," + titlePattern)
-            Hyprland.dispatch("resizewindowpixel exact " + w + " " + h + "," + titlePattern)
-        }
+    // ═══════════════════════════════════════════════════════════════
+    // CONTENT AREA - Uses the SAME animated values
+    // ═══════════════════════════════════════════════════════════════
+    Item {
+        id: contentArea
+        x: root._animPadding
+        y: root._animPadding
+        width: root._animWidth - root._animPadding * 2
+        height: root._animHeight - root._animPadding * 2
+        clip: true
     }
     
     AdaptiveColors {
         id: adaptiveColors
         region: root.backdropName
-    }
-    
-    // Mask for window shape
-    Item {
-        id: maskItem
-        anchors.fill: parent
-        visible: false
-        
-        // Main body (centered horizontally)
-        Rectangle {
-            id: mainMask
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            width: root.notchStyle ? root.targetWidth : parent.width
-            radius: root.targetRadius
-            
-            // Flat bottom corners
-            Rectangle {
-                visible: root.notchStyle || root.flatBottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: root.targetRadius
-            }
-        }
-          
-    }
-    
-    // Visual content
-    Item {
-        anchors.fill: parent
-        
-        Rectangle {
-            id: mainRect
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            width: root.notchStyle ? root.targetWidth : parent.width
-            
-            color: adaptiveColors.backgroundIsDark ? 
-                   Qt.rgba(0, 0, 0, 0.15) : 
-                   Qt.rgba(1, 1, 1, 0.15)
-            radius: root.targetRadius
-            
-            Rectangle {
-                visible: root.notchStyle || root.flatBottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: root.targetRadius
-                color: parent.color
-            }
-            
-            Behavior on color {
-                ColorAnimation { duration: 200 }
-            }
-            
-            Behavior on radius {
-                NumberAnimation { duration: 300; easing.type: Easing.OutQuart }
-            }
-        } 
     }
 }

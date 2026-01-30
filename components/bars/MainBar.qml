@@ -1,44 +1,39 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Quickshell
+import Quickshell.Services.SystemTray
+import Quickshell.Widgets
 import "../../globals" as Root
 import "../../globals"
 import "../../services"
 import "../../services/notification_utils.js" as NotificationUtils
+import ".."
 import "../effects"
 import "../behavior"
 import "../transforms"
 import "../widgets"
 
 /**
- * MainBar - Dynamic Island style notch bar (presentational component)
+ * MainBar - Dynamic Island style notch bar
  * 
- * A macOS Dynamic Island inspired notification bar that expands and contracts
- * based on content and user interaction. This component is purely presentational -
- * all behavior logic (visibility, mode switching) should be controlled by parent
- * using BarBehavior.
- * 
- * Features:
- * - Two display modes: floating (full UI) and compact (minimal notch)
- * - Expandable screens: launcher, notifications, weather, toolbar, power
- * - Volume overlay with GNOME-style feedback
- * - Notification popup with auto-dismiss
- * - Smooth animations using reusable transform components
- * 
- * @example
- *   MainBar {
- *       compactMode: barBehavior.isCompact  // Compact UI toggle
- *       showBar: barBehavior.barVisible     // Controls slide animation
- *       onBarHoverChanged: (h) => barBehavior.barHovered = h
- *       onPopupActiveChanged: (a) => // handle popup state
- *   }
- * 
- * @see BarBehavior - For behavior/state machine logic
- * @see BarTransform - For dimension and slide calculations
- * @see SizeAnimator - For animated size transitions
+ * Uses GlassBackdrop which manages both blur window and content area.
  */
 Item {
     id: notchContainer
+
+    // Size from GlassBackdrop
+    implicitWidth: glassBackdrop.implicitWidth
+    implicitHeight: glassBackdrop.implicitHeight
+    width: implicitWidth
+    height: implicitHeight
+    
+    /** Current margin from screen edge */
+    readonly property real barMargin: glassBackdrop.margin
+    
+    /** Screen dimensions - must be set by parent */
+    property int screenWidth: 1920
+    property int screenHeight: 1080
 
     // ═══════════════════════════════════════════════════════════════
     // BEHAVIOR MODE - Controls auto-hide behavior
@@ -56,6 +51,9 @@ Item {
     /** Whether this bar is active (for disabling AdaptiveColors in fullscreen) */
     property bool active: true
 
+    /** Parent window (used for tray menus) */
+    property var parentWindow: null
+
     // Internal hover tracking
     property bool _realHover: false
     
@@ -72,7 +70,7 @@ Item {
         debugName: "MainBar"
         mode: notchContainer.mode
         barHovered: notchContainer._realHover
-        popupActive: notchContainer.notificationPopupActive || notchContainer.volumeOverlayActive || notchContainer.brightnessOverlayActive
+        popupActive: notchContainer.notificationPopupActive || notchContainer.volumeOverlayActive || notchContainer.brightnessOverlayActive || notchContainer.trayMenuActive
         isExpanded: notchContainer.isExpanded
         hasActiveWindows: notchContainer.hasActiveWindows
         hideDelay: 1000
@@ -82,14 +80,13 @@ Item {
     readonly property bool compactMode: behavior.isCompact
     readonly property bool showBar: behavior.barVisible
     readonly property string internalState: behavior.internalState
-    
+
     // ═══════════════════════════════════════════════════════════════
     // DERIVED STATE - Computed from compactMode
     // ═══════════════════════════════════════════════════════════════
     
     /** @deprecated Use compactMode directly - kept for compatibility */
     readonly property bool discreteMode: compactMode
-    
     /** True when not in compact mode - full bar appearance */
     readonly property bool floatingMode: !compactMode
     
@@ -121,6 +118,12 @@ Item {
     
     /** Combined state: true when bar is expanded for any reason */
     readonly property bool screenNotchOpen: isExpanded || volumeOverlayActive || brightnessOverlayActive || notificationPopupActive
+
+    /** System tray menu active (keeps bar visible) */
+    property bool trayMenuActive: false
+
+    /** Active tray item id */
+    property string activeTrayItem: ""
     
     // ═══════════════════════════════════════════════════════════════
     // SIGNALS - Communication with parent
@@ -150,9 +153,10 @@ Item {
     signal popupActiveChanged(bool active)
     
     // Auto-emit popup changes to parent
-    onNotificationPopupActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive || brightnessOverlayActive)
-    onVolumeOverlayActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive || brightnessOverlayActive)
-    onBrightnessOverlayActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive || brightnessOverlayActive)
+    onNotificationPopupActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive || brightnessOverlayActive || trayMenuActive)
+    onVolumeOverlayActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive || brightnessOverlayActive || trayMenuActive)
+    onBrightnessOverlayActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive || brightnessOverlayActive || trayMenuActive)
+    onTrayMenuActiveChanged: popupActiveChanged(notificationPopupActive || volumeOverlayActive || brightnessOverlayActive || trayMenuActive)
     
     // ═══════════════════════════════════════════════════════════════
     // PUBLIC METHODS
@@ -185,7 +189,7 @@ Item {
     
     /**
      * Open an expanded screen view
-     * @param {string} viewName - One of: "launcher", "live", "notifications", "toolbar", "power", "clipboard"
+    * @param {string} viewName - One of: "launcher", "live", "toolbar", "power", "clipboard"
      */
     function openView(viewName) {
         if (currentView === viewName) return
@@ -226,6 +230,19 @@ Item {
     
     /** Dismiss a specific notification by ID */
     function dismissPopupNotification(id) { Notifications.discardNotification(id) }
+
+    // System tray menu anchor
+    QsMenuAnchor {
+        id: trayMenuAnchor
+        anchor.window: notchContainer.parentWindow
+        anchor.edges: Edges.Top
+        anchor.gravity: Edges.Top
+
+        onClosed: {
+            notchContainer.activeTrayItem = ""
+            notchContainer.trayMenuActive = false
+        }
+    }
     
     // ═══════════════════════════════════════════════════════════════
     // VOLUME OVERLAY TIMER
@@ -260,12 +277,7 @@ Item {
     // ═══════════════════════════════════════════════════════════════
     
     /**
-     * BarTransform - Calculates dimensions and slide animation
-     * 
-     * Handles:
-     * - Bar width/height based on discrete/floating/expanded state
-     * - Corner radius transitions
-     * - Slide Y offset for show/hide animation
+     * BarTransform - Calculates slide animation and radius
      */
     BarTransform {
         id: barTransform
@@ -273,16 +285,9 @@ Item {
         discreteMode: notchContainer.discreteMode
         expanded: screenNotchOpen
         showBar: notchContainer.showBar
-        contentWidth: stackContainer.width
-        contentHeight: stackContainer.height
+        contentWidth: 0  // Not used - GlassBackdrop sizes from content
+        contentHeight: 0
         animDuration: notchContainer.animDuration
-        
-        // Dimension configuration
-        discreteWidth: notchContainer.discreteWidth
-        discreteHeight: notchContainer.discreteHeight
-        normalHeight: notchContainer.normalHeight
-        expandedPadding: 32
-        collapsedPadding: 24
         
         // Radius configuration from Theme
         discreteRadius: 12
@@ -291,53 +296,7 @@ Item {
     }
     
     /**
-     * SizeAnimator - Provides smooth animated dimensions
-     * 
-     * Wraps the target dimensions with animation behaviors.
-     * Handles special cases: notification popup, volume and brightness overlay
-     * override normal dimensions.
-     */
-    SizeAnimator {
-        id: sizeAnimator
-        duration: notchContainer.animDuration
-        expanded: screenNotchOpen
-        
-        // Width: popup > volume > brightness > normal transform
-        targetWidth: {
-            if (notificationPopupActive && currentView === "default") {
-                return notificationPopupWidth
-            } else if (volumeOverlayActive && currentView === "default") {
-                return volumeOverlayWidth
-            } else if (brightnessOverlayActive && currentView === "default") {
-                return brightnessOverlayWidth
-            } else {
-                return barTransform.barWidth
-            }
-        }
-        
-        // Height: popup (dynamic) > volume > brightness > normal transform
-        targetHeight: {
-            if (notificationPopupActive && currentView === "default") {
-                var contentHeight = stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitHeight : 0
-                // Use base height as minimum to ensure notification is visible
-                return Math.max(contentHeight + 24, notificationPopupBaseHeight)
-            } else if (volumeOverlayActive && currentView === "default") {
-                return volumeOverlayHeight
-            } else if (brightnessOverlayActive && currentView === "default") {
-                return brightnessOverlayHeight
-            } else {
-                return barTransform.barHeight
-            }
-        }
-        
-        targetRadius: barTransform.barRadius
-    }
-    
-    /**
      * StackTransitions - Reusable push/pop/replace animations
-     * 
-     * Provides consistent transition animations for the StackView
-     * when navigating between screens.
      */
     StackTransitions {
         id: stackTransitions
@@ -382,9 +341,6 @@ Item {
         show: brightnessOverlayActive && !volumeOverlayActive && !notificationPopupActive
         duration: notchContainer.animDuration / 2
     }
-    
-    /** Apply slide transform from BarTransform */
-    transform: barTransform.slideTransform
 
     // ═══════════════════════════════════════════════════════════════
     // DIMENSION CONSTANTS
@@ -392,9 +348,6 @@ Item {
     
     /** Animation duration from global state (readonly) */
     readonly property int animDuration: Root.State.animDuration
-    
-    /** Width of minimal discrete notch */
-    readonly property int discreteWidth: 110
     
     /** Height of minimal discrete notch */
     readonly property int discreteHeight: 24
@@ -438,96 +391,70 @@ Item {
         region: "notch"
         active: notchContainer.active
     }
-    
+
     // ═══════════════════════════════════════════════════════════════
-    // EMBEDDED GLASS BACKDROP - Auto-syncs with bar dimensions
-    // ═══════════════════════════════════════════════════════════════
-    EmbeddedGlassBackdrop {
-        backdropName: "notch"
-        horizontalAlign: "center"
-        margin: notchContainer.compactMode ? 0 : 6
-        // Use explicit dimensions since MainBar uses SizeAnimator for animated sizes
-        explicitWidth: sizeAnimator.animatedWidth
-        explicitHeight: sizeAnimator.animatedHeight
-        targetRadius: {
-            if (notchContainer.discreteMode && !notchContainer.screenNotchOpen) {
-                return 12  // Discrete notch roundness
-            } else if (notchContainer.screenNotchOpen) {
-                return Theme.containerRoundness
-            } else {
-                return Theme.barRoundness
-            }
-        }
-        flatBottom: notchContainer.discreteMode && !notchContainer.screenNotchOpen
-        yOffset: barTransform.slideY
-        backdropVisible: notchContainer.active
-        startupDelay: 150
-    }
-    
-    // ═══════════════════════════════════════════════════════════════
-    // SIZE BINDING - Final dimensions with animation trigger hack
+    // GLASS BACKDROP - Unified blur window + content container
     // ═══════════════════════════════════════════════════════════════
     
     /**
-     * Animation trigger hack - forces binding re-evaluation
-     * Random value added (multiplied by 0) to force recalculation
+     * GlassBackdrop - Single component managing both:
+     * - FloatingWindow for Hyprland blur effect
+     * - Content area for bar UI
+     * 
+     * Both share the same size/radius - zero sync needed.
      */
-    property real animationTrigger: 0
-    onScreenNotchOpenChanged: {
-        if (screenNotchOpen) {
-            animationTrigger = Math.random()
-        }
+    GlassBackdrop {
+        id: glassBackdrop
+        backdropName: "notch"
+        horizontalAlign: "center"
+        margin: 6
+        startupDelay: 150
+        
+        // Radius from transform
+        radius: barTransform.barRadius
+        
+        // Padding for content - less in discrete mode
+        contentPadding: discreteMode ? 2 : (screenNotchOpen ? 16 : 12)
+        
+        // Animation
+        animationDuration: animDuration
+        
+        // Visibility
+        backdropVisible: notchContainer.active
+        
+        // Slide animation
+        yOffset: barTransform.slideY
+        
+        // Screen dimensions from parent
+        screenWidth: notchContainer.screenWidth
+        screenHeight: notchContainer.screenHeight
     }
-
-    /** Final animated width from SizeAnimator */
-    implicitWidth: sizeAnimator.animatedWidth + (screenNotchOpen ? animationTrigger * 0 : 0)
-    
-    /** Final animated height from SizeAnimator */
-    implicitHeight: sizeAnimator.animatedHeight + (screenNotchOpen ? animationTrigger * 0 : 0)
-    
-    // Explicit size for BarHoverDetector (anchors.fill requires explicit size)
-    width: sizeAnimator.animatedWidth
-    height: sizeAnimator.animatedHeight
 
     // ═══════════════════════════════════════════════════════════════
     // VISUAL ELEMENTS
     // ═══════════════════════════════════════════════════════════════
 
     /**
-     * ShadowBorder - Background with shadow and rounded corners
-     * 
-     * Provides the glass-like background with configurable radius
-     * and optional flat bottom for discrete mode (attached to edge).
-     */
-    ShadowBorder {
-        radius: sizeAnimator.animatedRadius
-        flatBottom: barTransform.flatBottom && !volumeOverlayActive && !notificationPopupActive
-    }
-
-    /**
      * Stack Container - Holds the StackView with content
-     * 
-     * Provides padding around the StackView content.
-     * Width/height expand when showing screens.
+     * Lives inside GlassBackdrop's contentItem
      */
     Item {
         id: stackContainer
-        anchors.centerIn: parent
-        width: stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitWidth + (screenNotchOpen ? 32 : 0) : (screenNotchOpen ? 32 : 0)
-        height: stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitHeight + (screenNotchOpen ? 32 : 0) : (screenNotchOpen ? 32 : 0)
-        clip: true
+        parent: glassBackdrop.contentItem
+        
+        // Size from content - this drives GlassBackdrop's size
+        implicitWidth: stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitWidth : 100
+        implicitHeight: stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitHeight : 36
+        width: implicitWidth
+        height: implicitHeight
 
         /**
          * StackView - Screen navigation container
-         * 
-         * Manages push/pop/replace transitions between:
-         * - Default view (collapsed bar content)
-         * - Screen views (launcher, notifications, etc.)
          */
         StackView {
             id: stackViewInternal
             anchors.fill: parent
-            anchors.margins: screenNotchOpen ? 16 : 0
+            clip: true
             initialItem: defaultViewComponent
 
             // Reusable transition animations
@@ -550,8 +477,7 @@ Item {
      * Contains four mutually exclusive content layers:
      * 1. NotificationPopupWidget - When notifications arrive
      * 2. VolumeOverlayWidget - When adjusting volume
-     * 3. defaultRow - Floating mode (weather, time, notification count)
-     * 4. discreteRow - Discrete mode (time, notification icon)
+     * 3. defaultRow - Unified floating/discrete mode (animates between them)
      * 
      * FadeAnimators control smooth transitions between layers.
      */
@@ -562,7 +488,6 @@ Item {
             implicitWidth: {
                 if (notificationPopupActive) return notificationPopupWidth - 32
                 if (volumeOverlayActive) return volumeOverlayRow.implicitWidth
-                if (discreteMode) return discreteRow.implicitWidth
                 return defaultRow.implicitWidth
             }
             implicitHeight: {
@@ -571,8 +496,7 @@ Item {
                     return Math.max(notificationPopupColumn.implicitHeight, notificationPopupBaseHeight - 24)
                 }
                 if (volumeOverlayActive) return 36
-                if (discreteMode) return 20
-                return 36
+                return defaultRow.implicitHeight
             }
 
             /**
@@ -597,7 +521,7 @@ Item {
                 onHoverStarted: pauseNotificationTimers()
                 onHoverEnded: resumeNotificationTimers()
                 onNotificationClicked: {
-                    notchContainer.openView("notifications")
+                    notchContainer.openView("live")
                     Notifications.hideAllPopups()
                 }
                 onNotificationDismissed: (id) => dismissPopupNotification(id)
@@ -651,141 +575,457 @@ Item {
             }
 
             /**
-             * Default Row - Floating mode content
+             * Default Row - Unified floating/discrete mode content
              * 
-             * Shows: Weather icon | Time | Notification bell
-             * Each element is clickable to open its respective screen.
+             * All elements animate between modes:
+             * - LEFT: Launcher, Overview, Workspaces (fade in normal mode)
+             * - CENTER: Time (always), Weather + Notification (animate size/position)
+             * - RIGHT: Tray, Status, Power (compact in discrete)
              */
-            RowLayout {
+            Item {
                 id: defaultRow
-                anchors.centerIn: parent
-                spacing: 10
-                visible: defaultFade.actualVisible
-                opacity: defaultFade.animatedOpacity
+                visible: (defaultFade.actualVisible || discreteFade.actualVisible) && !volumeOverlayActive && !brightnessOverlayActive && !notificationPopupActive
+                opacity: Math.max(defaultFade.animatedOpacity, discreteFade.animatedOpacity)
+                
+                // Fill parent width so center anchor works against bar width
+                anchors.fill: parent
+                
+                // Use actual cluster widths - GlassBackdrop handles the animation smoothly
+                implicitWidth: Math.max(
+                    leftCluster.implicitWidth + centerCluster.implicitWidth + rightCluster.implicitWidth + (discreteMode ? 16 : 40),
+                    centerCluster.implicitWidth + 2 * Math.max(leftCluster.implicitWidth, rightCluster.implicitWidth) + (discreteMode ? 16 : 40)
+                )
+                implicitHeight: discreteMode ? 20 : 36
 
-                /** Weather icon - opens live screen */
-                Item {
-                    width: 28; height: 28
-                    Text {
-                        anchors.centerIn: parent
-                        text: "🌤"; font.pixelSize: 18
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: notchContainer.openView("live")
-                    }
-                }
-
-                /** Separator dot */
-                Rectangle { width: 4; height: 4; radius: 2; color: adaptiveColors.subtleTextColor }
-
-                /** Time display - opens live screen */
-                Text {
-                    id: timeTextFull
-                    color: adaptiveColors.textColor
-                    font.pixelSize: 13
-                    font.weight: Font.Medium
-                    font.family: "monospace"
-                    property date now: new Date()
-                    text: now.getHours().toString().padStart(2,'0') + ":" + now.getMinutes().toString().padStart(2,'0')
-                    Timer {
-                        interval: 1000; running: true; repeat: true
-                        onTriggered: timeTextFull.now = new Date()
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: notchContainer.openView("live")
-                    }
-                }
-
-                /** Separator dot */
-                Rectangle { width: 4; height: 4; radius: 2; color: adaptiveColors.subtleTextColor }
-
-                /** Notification indicator - opens notifications screen */
-                Item {
-                    width: 28; height: 28
-                    
-                    /** Notification count badge */
-                    Text {
-                        anchors.centerIn: parent
-                        text: Notifications.list.length > 0 ? Notifications.list.length.toString() : "0"
-                        color: adaptiveColors.textColor
-                        font.pixelSize: 11
-                        font.weight: Font.DemiBold
-                        z: 1
-                        visible: Notifications.list.length > 0
-                    }
-                    
-                    /** Bell icon (shown when no notifications) */
-                    Text {
-                        anchors.centerIn: parent
-                        text: "🔔"; font.pixelSize: 16
-                        visible: Notifications.list.length === 0
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: notchContainer.openView("notifications")
-                    }
-                }
-            }
-            
-            /**
-             * Discrete Row - Minimal notch content
-             * 
-             * Shows: Time | Notification icon/count
-             * More compact than floating mode, docks to screen edge.
-             */
-            Row {
-                id: discreteRow
-                anchors.centerIn: parent
-                 spacing: 10
-                visible: discreteFade.actualVisible
-                opacity: discreteFade.animatedOpacity
-
-                /** Time display (monospace) */
-                Text {
-                    id: timeTextDiscrete
+                // Left cluster: launcher, overview, workspaces
+                RowLayout {
+                    id: leftCluster
+                    anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
-                    color: adaptiveColors.textColor
-                    font.pixelSize: 13
-                    font.weight: Font.Medium
-                    font.family: "monospace"
-                    property date now: new Date()
-                    text: now.getHours().toString().padStart(2,'0') + ":" + now.getMinutes().toString().padStart(2,'0')
-                    Timer {
-                        interval: 1000; running: true; repeat: true
-                        onTriggered: timeTextDiscrete.now = new Date()
+                    spacing: discreteMode ? 4 : 6
+
+                    // Launcher button (hidden in discrete)
+                    Rectangle {
+                        Layout.preferredWidth: discreteMode ? 0 : 34
+                        Layout.preferredHeight: discreteMode ? 0 : 34
+                        radius: Theme.barRoundness / 2
+                        color: launcherMouse.containsMouse ? Theme.current.hover : "transparent"
+                        opacity: discreteMode ? 0 : 1
+                        clip: true
+                        
+                        Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "⚙"
+                            font.pixelSize: 18
+                            color: adaptiveColors.iconColor
+                        }
+
+                        MouseArea {
+                            id: launcherMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: notchContainer.openView("launcher")
+                            enabled: !discreteMode
+                        }
+                    }
+
+                    // Overview button (hidden in discrete)
+                    Rectangle {
+                        Layout.preferredWidth: discreteMode ? 0 : 34
+                        Layout.preferredHeight: discreteMode ? 0 : 34
+                        radius: 10
+                        color: overviewMouse.containsMouse ? Theme.current.hover : "transparent"
+                        opacity: discreteMode ? 0 : 1
+                        clip: true
+                        
+                        Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "▦"
+                            font.pixelSize: 16
+                            color: adaptiveColors.iconColor
+                        }
+
+                        MouseArea {
+                            id: overviewMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: State.toggleOverview()
+                            enabled: !discreteMode
+                        }
+                    }
+
+                    // Workspaces widget (always visible)
+                    WorkspacesWidget {
+                        textColor: adaptiveColors.iconColor
                     }
                 }
 
-                /** Notification icon with count */
+                // Center cluster: time is the absolute center point of the bar
+                // All properties animate based on discreteMode
                 Item {
-                    width: 16
-                    height: 16
-                    anchors.verticalCenter: parent.verticalCenter
+                    id: centerCluster
+                    anchors.centerIn: parent
                     
-                    /** Count badge */
+                    // Target size based on mode (for implicitWidth calculation)
+                    readonly property real targetWidth: discreteMode 
+                        ? timeTextFull.implicitWidth + 8 + 16  // time + margin + small notification
+                        : 28 + 10 + timeTextFull.implicitWidth + 10 + 28  // weather + margin + time + margin + notification
+                    readonly property real targetHeight: discreteMode ? 20 : 36
+                    
+                    // Report target size immediately for bar width calculation
+                    implicitWidth: targetWidth
+                    implicitHeight: targetHeight
+                    
+                    // Size changes instantly - GlassBackdrop animates the container
+                    width: targetWidth
+                    height: targetHeight
+
+                    /** Time display - CENTER of the bar (always visible) */
                     Text {
+                        id: timeTextFull
                         anchors.centerIn: parent
-                        anchors.verticalCenterOffset: -1
-                        text: Notifications.list.length > 0 
-                              ? Notifications.list.length.toString() 
-                              : ""
                         color: adaptiveColors.textColor
-                        font.pixelSize: 9
-                        font.weight: Font.DemiBold
-                        z: 1
-                    }
-                    
-                    /** Bell icon */
-                    Text {
-                        anchors.centerIn: parent
-                        text: "🔔"
                         font.pixelSize: 13
-                        opacity: Notifications.list.length > 0 ? 0.7 : 1.0
+                        font.weight: Font.Medium
+                        font.family: "monospace"
+                        property date now: new Date()
+                        text: now.getHours().toString().padStart(2,'0') + ":" + now.getMinutes().toString().padStart(2,'0')
+                        Timer {
+                            interval: 1000; running: true; repeat: true
+                            onTriggered: timeTextFull.now = new Date()
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: notchContainer.openView("live")
+                        }
+                    }
+
+                    /** Weather icon - left of time (only in normal mode) */
+                    Item {
+                        id: weatherIcon
+                        width: 28; height: 28
+                        anchors.right: timeTextFull.left
+                        anchors.rightMargin: discreteMode ? -width : 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        opacity: discreteMode ? 0 : 1
+                        scale: discreteMode ? 0.5 : 1
+                        
+                        Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
+                        Behavior on scale { NumberAnimation { duration: animDuration; easing.type: Easing.OutQuart } }
+                        
+                        Text {
+                            anchors.centerIn: parent
+                            text: "🌤"; font.pixelSize: 18
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: notchContainer.openView("live")
+                            enabled: !discreteMode
+                        }
+                    }
+
+                    /** Notification indicator - right of time (animates size/position) */
+                    Item {
+                        id: notificationIcon
+                        width: discreteMode ? 16 : 28
+                        height: discreteMode ? 16 : 28
+                        anchors.left: timeTextFull.right
+                        anchors.leftMargin: discreteMode ? 8 : 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        
+                        /** Notification count badge */
+                        Text {
+                            anchors.centerIn: parent
+                            anchors.verticalCenterOffset: discreteMode ? -1 : 0
+                            text: Notifications.list.length > 0 ? Notifications.list.length.toString() : (discreteMode ? "" : "0")
+                            color: adaptiveColors.textColor
+                            font.pixelSize: discreteMode ? 9 : 11
+                            font.weight: Font.DemiBold
+                            z: 1
+                            visible: discreteMode ? Notifications.list.length > 0 : Notifications.list.length > 0
+                            
+                            Behavior on font.pixelSize { NumberAnimation { duration: animDuration } }
+                        }
+                        
+                        /** Bell icon */
+                        Text {
+                            anchors.centerIn: parent
+                            text: "🔔"
+                            font.pixelSize: discreteMode ? 13 : 16
+                            opacity: discreteMode ? (Notifications.list.length > 0 ? 0.7 : 1.0) : (Notifications.list.length === 0 ? 1 : 0)
+                            
+                            Behavior on font.pixelSize { NumberAnimation { duration: animDuration } }
+                            Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: notchContainer.openView("live")
+                        }
+                    }
+                    
+                    /** Discrete notification icon (overlays, for discrete-only appearance) */
+                    Item {
+                        id: discreteNotifIcon
+                        width: 16; height: 16
+                        visible: false  // Only used for size calculation
+                    }
+                }
+
+                // Right cluster: tray, status, power (animates between modes)
+                RowLayout {
+                    id: rightCluster
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: discreteMode ? 4 : 8
+
+                    // System tray (compact in discrete)
+                    Item {
+                        Layout.preferredWidth: discreteMode ? compactTrayLayout.implicitWidth : trayLayout.implicitWidth + 12
+                        Layout.preferredHeight: discreteMode ? 20 : 36
+
+                        // Normal mode tray
+                        RowLayout {
+                            id: trayLayout
+                            anchors.centerIn: parent
+                            spacing: 6
+                            visible: !discreteMode
+                            opacity: discreteMode ? 0 : 1
+                            
+                            Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
+
+                            Repeater {
+                                model: SystemTray.items
+                                delegate: MouseArea {
+                                    id: trayItem
+                                    required property SystemTrayItem modelData
+                                    property string trayId: modelData.id
+                                    Layout.preferredWidth: 20
+                                    Layout.preferredHeight: 20
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+
+                                    onClicked: function(mouse) {
+                                        if (mouse.button === Qt.LeftButton) {
+                                            modelData.activate()
+                                        } else if (mouse.button === Qt.RightButton && modelData.hasMenu && notchContainer.parentWindow) {
+                                            notchContainer.activeTrayItem = trayId
+                                            notchContainer.trayMenuActive = true
+                                            trayMenuAnchor.menu = modelData.menu
+                                            var iconPos = trayItem.mapToItem(null, trayItem.width / 2, 0)
+                                            trayMenuAnchor.anchor.rect = Qt.rect(iconPos.x, iconPos.y, 1, 1)
+                                            trayMenuAnchor.open()
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        anchors.centerIn: parent
+                                        width: parent.width + 4
+                                        height: parent.height + 4
+                                        radius: 4
+                                        color: adaptiveColors.textColor
+                                        visible: notchContainer.activeTrayItem === trayId
+                                        opacity: 0.1
+                                    }
+
+                                    IconImage {
+                                        id: trayIcon
+                                        source: trayItem.modelData.icon
+                                        anchors.centerIn: parent
+                                        implicitWidth: 20
+                                        implicitHeight: 20
+                                        visible: status === Image.Ready
+                                    }
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "●"
+                                        font.pixelSize: 14
+                                        color: adaptiveColors.iconColor
+                                        visible: trayIcon.status !== Image.Ready
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Compact tray for discrete mode
+                        Row {
+                            id: compactTrayLayout
+                            anchors.centerIn: parent
+                            spacing: 4
+                            visible: discreteMode
+                            opacity: discreteMode ? 1 : 0
+                            
+                            Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
+                            
+                            Repeater {
+                                model: SystemTray.items
+                                delegate: MouseArea {
+                                    required property SystemTrayItem modelData
+                                    property string trayId: modelData.id
+                                    width: 16
+                                    height: 16
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+
+                                    onClicked: function(mouse) {
+                                        if (mouse.button === Qt.LeftButton) {
+                                            modelData.activate()
+                                        } else if (mouse.button === Qt.RightButton && modelData.hasMenu && notchContainer.parentWindow) {
+                                            notchContainer.activeTrayItem = trayId
+                                            notchContainer.trayMenuActive = true
+                                            trayMenuAnchor.menu = modelData.menu
+                                            var iconPos = mapToItem(null, width / 2, 0)
+                                            trayMenuAnchor.anchor.rect = Qt.rect(iconPos.x, iconPos.y, 1, 1)
+                                            trayMenuAnchor.open()
+                                        }
+                                    }
+
+                                    IconImage {
+                                        source: modelData.icon
+                                        anchors.centerIn: parent
+                                        implicitWidth: 16
+                                        implicitHeight: 16
+                                        visible: status === Image.Ready
+                                    }
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "●"
+                                        font.pixelSize: 10
+                                        color: adaptiveColors.iconColor
+                                        visible: parent.children[0].status !== Image.Ready
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Status indicators - clickable for toolbar (hidden in discrete)
+                    Item {
+                        Layout.preferredWidth: discreteMode ? 0 : statusLayout.implicitWidth + 12
+                        Layout.preferredHeight: discreteMode ? 0 : 36
+                        opacity: discreteMode ? 0 : 1
+                        clip: true
+                        
+                        Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
+                        
+                        RowLayout {
+                            id: statusLayout
+                            anchors.centerIn: parent
+                            spacing: 6
+
+                            // Volume
+                            Item {
+                                width: 24; height: 24
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: Audio.muted || Audio.volume === 0 ? "🔇" : (Audio.volume < 0.33 ? "🔉" : "🔊")
+                                    font.pixelSize: 14
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        Audio.toggleMute()
+                                        notchContainer.showVolumeOverlay()
+                                    }
+                                    onWheel: function(wheel) {
+                                        if (wheel.angleDelta.y > 0) Audio.incrementVolume()
+                                        else Audio.decrementVolume()
+                                        notchContainer.showVolumeOverlay()
+                                    }
+                                }
+                            }
+
+                            // Network
+                            Item {
+                                width: 24; height: 24
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: Network.wifiEnabled ? (Network.wifiConnected ? "📶" : "📡") : "📵"
+                                    font.pixelSize: 14
+                                }
+                            }
+
+                            // Bluetooth
+                            Item {
+                                width: 24; height: 24
+                                visible: Bluetooth.enabled
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: Bluetooth.connected ? "🔷" : "📳"
+                                    font.pixelSize: 12
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: notchContainer.openView("toolbar")
+                            enabled: !discreteMode
+                        }
+                    }
+                    
+                    // Volume icon (discrete mode only, inline)
+                    Text {
+                        Layout.preferredWidth: discreteMode ? implicitWidth : 0
+                        Layout.preferredHeight: discreteMode ? implicitHeight : 0
+                        text: Audio.muted || Audio.volume === 0 ? "🔇" : (Audio.volume < 0.33 ? "🔉" : "🔊")
+                        font.pixelSize: 12
+                        opacity: discreteMode ? 1 : 0
+                        clip: true
+                        
+                        Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
+                        
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -4
+                            enabled: discreteMode
+                            onClicked: {
+                                Audio.toggleMute()
+                                notchContainer.showVolumeOverlay()
+                            }
+                            onWheel: function(wheel) {
+                                if (wheel.angleDelta.y > 0) Audio.incrementVolume()
+                                else Audio.decrementVolume()
+                                notchContainer.showVolumeOverlay()
+                            }
+                        }
+                    }
+
+                    // Power button (hidden in discrete)
+                    Item {
+                        Layout.preferredWidth: discreteMode ? 0 : 36
+                        Layout.preferredHeight: discreteMode ? 0 : 36
+                        opacity: discreteMode ? 0 : 1
+                        clip: true
+                        
+                        Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "⏻"
+                            font.pixelSize: 15
+                            color: powerMouse.containsMouse ? "#ff6b6b" : adaptiveColors.iconColor
+                        }
+
+                        MouseArea {
+                            id: powerMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: notchContainer.openView("power")
+                            enabled: !discreteMode
+                        }
                     }
                 }
             }
@@ -798,7 +1038,9 @@ Item {
 
     /** Screen view mapping - Maps view names to QML file paths */
     readonly property var screenViews: ({
+        "launcher": "../../screens/AppLauncher.qml",
         "live": "../../screens/LiveScreen.qml",
+        "toolbar": "../../screens/ToolbarScreen.qml",
         "power": "../../screens/PowerScreen.qml",
         "clipboard": "../../screens/ClipboardScreen.qml"
     })

@@ -28,14 +28,8 @@ Singleton {
     // BAR MODES
     // ═══════════════════════════════════════════════════════════════
     
-    /** Workspace bar (left) - launcher, overview, workspaces */
-    readonly property string workspaceBarMode: "dynamic"
-    
-    /** Main bar (center) - dynamic island notch */
+    /** Main bar - unified dynamic island with all controls */
     readonly property string mainBarMode: "dynamic"
-    
-    /** Status bar (right) - tray, status, power */
-    readonly property string statusBarMode: "dynamic"
     
     // ═══════════════════════════════════════════════════════════════
     // WALLPAPER SETTINGS
@@ -79,14 +73,20 @@ Singleton {
     property FileView configWatcher: FileView {
         path: ""
         onTextChanged: {
-            if (text && root.configReady) {
-                root.parseConfig(text)
+            // Only parse if we have valid-looking JSON content
+            var content = text()
+            if (content && content.trim().startsWith("{") && content.trim().endsWith("}") && root.configReady) {
+                root.parseConfig(content)
             }
         }
     }
     
     // Parse JSON config
     function parseConfig(jsonStr) {
+        if (!jsonStr || !jsonStr.trim()) {
+            configReady = true
+            return
+        }
         try {
             var config = JSON.parse(jsonStr)
             

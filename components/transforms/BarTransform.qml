@@ -57,8 +57,9 @@ Item {
     // DISCRETE MODE DIMENSIONS
     // ═══════════════════════════════════════════════════════════════
     
-    property int discreteWidth: 110
+    property int discreteWidth: 110  // Minimum width (fallback)
     property int discreteHeight: 24
+    property int discretePadding: 16  // Padding for discrete mode content
     property int normalHeight: 44
     property int expandedPadding: 32
     property int collapsedPadding: 24
@@ -93,7 +94,7 @@ Item {
     // Calculated width for the bar
     readonly property real barWidth: {
         if (discreteMode && !expanded) {
-            return discreteWidth
+            return Math.max(contentWidth + discretePadding, discreteWidth)
         } else if (expanded) {
             return Math.max(contentWidth + expandedPadding, minExpandedWidth)
         } else {

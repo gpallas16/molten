@@ -80,48 +80,25 @@ ShellRoot {
                 mainBarContent.closeView()
                 return
             }
-            // Also check workspace and status bar current views
-            if (workspaceBarContent.currentView === action) {
-                workspaceBarContent.closeView()
-                return
-            }
-            if (statusBarContent.currentView === action) {
-                statusBarContent.closeView()
-                return
-            }
             
             switch (action) {
                 case "launcher":
-                    // Close other bars if open
-                    mainBarContent.closeView()
-                    statusBarContent.closeView()
-                    workspaceBarContent.openView("launcher")
+                    mainBarContent.openView("launcher")
                     break
                 case "notifications":
                     // Notifications merged into live screen
-                    workspaceBarContent.closeView()
-                    statusBarContent.closeView()
                     mainBarContent.openView("live")
                     break
                 case "toolbar":
-                    // Close other bars if open
-                    mainBarContent.closeView()
-                    workspaceBarContent.closeView()
-                    statusBarContent.openView("toolbar")
+                    mainBarContent.openView("toolbar")
                     break
                 case "power":
-                    workspaceBarContent.closeView()
-                    statusBarContent.closeView()
                     mainBarContent.openView("power")
                     break
                 case "live":
-                    workspaceBarContent.closeView()
-                    statusBarContent.closeView()
                     mainBarContent.openView("live")
                     break
                 case "clipboard":
-                    workspaceBarContent.closeView()
-                    statusBarContent.closeView()
                     mainBarContent.openView("clipboard")
                     break
                 default:
@@ -239,9 +216,7 @@ ShellRoot {
     // ═══════════════════════════════════════════════════════════════
     PanelWindow {
         id: exclusiveZoneBar
-        visible: Config.mainBarMode !== "hidden" || 
-                 Config.workspaceBarMode !== "hidden" || 
-                 Config.statusBarMode !== "hidden"
+        visible: Config.mainBarMode !== "hidden"
         
         anchors {
             bottom: true
@@ -356,12 +331,8 @@ ShellRoot {
             id: mainBarRegionContainer
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            // Position based on state: discrete=docked, floating=with margin
-            // Hidden state is now handled by MainBar's showBar property with slide animation
-            anchors.bottomMargin: {
-                if (mainBarWindow.barState === "floating") return 2
-                return 0  // discrete - docked (hidden uses showBar: false)
-            }
+            // Position from MainBar's barShape - single source of truth
+            anchors.bottomMargin: mainBarContent.barMargin
             width: mainBarContent.implicitWidth
             height: mainBarContent.implicitHeight
             
@@ -372,6 +343,11 @@ ShellRoot {
             MainBar {
                 id: mainBarContent
                 anchors.centerIn: parent
+                parentWindow: mainBarWindow
+                
+                // Screen dimensions for GlassBackdrop positioning
+                screenWidth: mainBarWindow.width
+                screenHeight: mainBarWindow.height
                 
                 // Behavior inputs - MainBar now has its own BarBehavior
                 mode: Config.mainBarMode
@@ -391,169 +367,13 @@ ShellRoot {
                 }
             }
         }
-    }
 
-    // ═══════════════════════════════════════════════════════════════
-    // WORKSPACE BAR - Launcher, Overview, Workspaces
-    // ═══════════════════════════════════════════════════════════════
-    PanelWindow {
-        id: workspaceBar
-        visible: !root.isFullscreen
-
-        anchors {
-            bottom: true
-            left: true
-            top: workspaceBarContent.isExpanded
-            right: workspaceBarContent.isExpanded
-        }
-        // Negative margin to counteract exclusive zone push
-        margins.bottom: exclusiveZoneBar.visible ? -exclusiveZoneBar.zoneHeight : 0
-        margins.left: 0
-
-        // Window size - use -1 when expanded (anchors control size)
-        implicitHeight: workspaceBarContent.isExpanded ? -1 : 60
-        implicitWidth: workspaceBarContent.isExpanded ? -1 : (workspaceBarContent.implicitWidth + 20)
-
-        WlrLayershell.layer: workspaceBarContent.isExpanded ? WlrLayer.Overlay : WlrLayer.Top
-        WlrLayershell.namespace: "molten-left"
-        WlrLayershell.keyboardFocus: workspaceBarContent.isExpanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-
-        color: "transparent"
-        
-        // Mask: full window when expanded, bar area otherwise
-        mask: Region {
-            item: workspaceBarContent.isExpanded ? workspaceBarFullMask : workspaceBarMask
-        }
-        
-        Item {
-            id: workspaceBarFullMask
-            anchors.fill: parent
-        }
-        
-        Item {
-            id: workspaceBarMask
-            anchors.left: parent.left
-            anchors.bottom: parent.bottom
-            width: workspaceBarRegionContainer.width + 20
-            height: workspaceBarRegionContainer.height + 20
-        }
-        
-        // Click outside to close
-        MouseArea {
-            anchors.fill: parent
-            z: -1
-            visible: workspaceBarContent.isExpanded
-            onClicked: workspaceBarContent.closeView()
-        }
-        
         // Auto-reveal when workspace changes
         Connections {
             target: Root.State
             function onActiveWorkspaceChanged() {
-                workspaceBarContent.showTemporarily()
-            }
-        }
-
-        Item {
-            id: workspaceBarRegionContainer
-            anchors.left: parent.left
-            anchors.bottom: parent.bottom
-            anchors.leftMargin: 6
-            anchors.bottomMargin: 2
-            width: workspaceBarContent.implicitWidth
-            height: workspaceBarContent.implicitHeight
-            
-            WorkspaceBar {
-                id: workspaceBarContent
-                anchors.centerIn: parent
-                mode: Config.workspaceBarMode
-                hasActiveWindows: mainBarWindow.hasActiveWindows
-                active: !root.isFullscreen
-                onOverviewRequested: State.toggleOverview()
+                mainBarContent.showTemporarily()
             }
         }
     }
-
-    // ═══════════════════════════════════════════════════════════════
-    // STATUS BAR - Power, Toolbar, System Tray
-    // ═══════════════════════════════════════════════════════════════
-    PanelWindow {
-        id: statusBar
-        visible: !root.isFullscreen
-
-        anchors {
-            bottom: true
-            right: true
-            top: statusBarContent.isExpanded
-            left: statusBarContent.isExpanded
-        }
-        // Negative margin to counteract exclusive zone push
-        margins.bottom: exclusiveZoneBar.visible ? -exclusiveZoneBar.zoneHeight : 0
-        margins.right: 0
-
-        // Window size - use -1 when expanded (anchors control size)
-        implicitHeight: statusBarContent.isExpanded ? -1 : 60
-        implicitWidth: statusBarContent.isExpanded ? -1 : (statusBarContent.implicitWidth + 20)
-
-        WlrLayershell.layer: statusBarContent.isExpanded ? WlrLayer.Overlay : WlrLayer.Top
-        WlrLayershell.namespace: "molten-right"
-        WlrLayershell.keyboardFocus: statusBarContent.isExpanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-
-        color: "transparent"
-        
-        // Mask: full window when expanded, bar area otherwise
-        mask: Region {
-            item: statusBarContent.isExpanded ? statusBarFullMask : statusBarMask
-        }
-        
-        Item {
-            id: statusBarFullMask
-            anchors.fill: parent
-        }
-        
-        Item {
-            id: statusBarMask
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            width: statusBarRegionContainer.width + 20
-            height: statusBarRegionContainer.height + 20
-        }
-        
-        // Click outside to close
-        MouseArea {
-            anchors.fill: parent
-            z: -1
-            visible: statusBarContent.isExpanded
-            onClicked: statusBarContent.closeView()
-        }
-
-        Item {
-            id: statusBarRegionContainer
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.rightMargin: 6
-            anchors.bottomMargin: 2
-            width: statusBarContent.implicitWidth
-            height: statusBarContent.implicitHeight
-            
-            StatusBar {
-                id: statusBarContent
-                anchors.centerIn: parent
-                parentWindow: statusBar
-                mode: Config.statusBarMode
-                hasActiveWindows: mainBarWindow.hasActiveWindows
-                active: !root.isFullscreen
-                onPowerRequested: {
-                    statusBarContent.closeView()
-                    mainBarContent.openView("power")
-                }
-                // GNOME-like volume scroll - trigger MainBar volume overlay
-                onVolumeScrollChanged: {
-                    mainBarContent.showVolumeOverlay()
-                }
-            }
-        }
-    }
-
-
 }

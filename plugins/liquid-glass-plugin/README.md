@@ -3,8 +3,7 @@
 cd /home/giorgos/Projects/molten/plugins/liquid-glass-plugin
 make clean && make
 hyprctl plugin unload $(pwd)/liquid-glass.so
-hyprctl plugin load $(pwd)/liquid-glass.so
-
+S
 A stunning Apple-style **Liquid Glass** effect for Hyprland, inspired by iOS 26's revolutionary design language.
 
 ![Liquid Glass Effect](https://img.shields.io/badge/Effect-Liquid%20Glass-blue?style=for-the-badge)
