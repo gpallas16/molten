@@ -22,11 +22,11 @@ Item {
 
         Repeater {
             model: [
-                { icon: "🔒", label: "Lock", action: "lock" },
-                { icon: "😴", label: "Suspend", action: "suspend" },
-                { icon: "🔄", label: "Reboot", action: "reboot" },
-                { icon: "⏻", label: "Shutdown", action: "shutdown" },
-                { icon: "🚪", label: "Logout", action: "logout" }
+                { icon: Icons.lock, label: "Lock", action: "lock" },
+                { icon: Icons.suspend, label: "Suspend", action: "suspend" },
+                { icon: Icons.reboot, label: "Reboot", action: "reboot" },
+                { icon: Icons.shutdown, label: "Shutdown", action: "shutdown" },
+                { icon: Icons.logout, label: "Logout", action: "logout" }
             ]
 
             Item {
@@ -42,7 +42,9 @@ Item {
 
                     Text {
                         text: modelData.icon
+                        font.family: Icons.font
                         font.pixelSize: 28
+                        color: adaptiveColors.iconColor
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
                     Text {

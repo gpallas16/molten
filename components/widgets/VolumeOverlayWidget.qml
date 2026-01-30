@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import "../../services"
+import "../../globals"
 
 /**
  * VolumeOverlayWidget - Displays volume control slider
@@ -49,13 +50,10 @@ RowLayout {
     // Volume icon
     Text {
         id: volumeIcon
-        text: {
-            if (root.muted || root.volume === 0) return "🔇"
-            if (root.volume < 0.33) return "🔉"
-            if (root.volume < 0.66) return "🔊"
-            return "🔊"
-        }
-        font.pixelSize: 18
+        text: Icons.volumeIcon(root.volume, root.muted)
+        font.family: Icons.font
+        font.pixelSize: 20
+        color: root.textColor
         Layout.alignment: Qt.AlignVCenter
     }
     

@@ -54,8 +54,12 @@ Item {
     /** Parent window (used for tray menus) */
     property var parentWindow: null
 
-    // Internal hover tracking
-    property bool _realHover: false
+    // External hover tracking (from full-width bottom zone)
+    property bool externalHover: false
+    
+    // Internal hover tracking (combines external and bar hover)
+    property bool _realHover: externalHover || _barHover
+    property bool _barHover: false
     
     /**
      * Temporarily show the bar (e.g., on activity/events)
@@ -617,7 +621,8 @@ Item {
 
                         Text {
                             anchors.centerIn: parent
-                            text: "⚙"
+                            text: Icons.apps
+                            font.family: Icons.font
                             font.pixelSize: 18
                             color: adaptiveColors.iconColor
                         }
@@ -645,7 +650,8 @@ Item {
 
                         Text {
                             anchors.centerIn: parent
-                            text: "▦"
+                            text: Icons.overview
+                            font.family: Icons.font
                             font.pixelSize: 16
                             color: adaptiveColors.iconColor
                         }
@@ -722,7 +728,10 @@ Item {
                         
                         Text {
                             anchors.centerIn: parent
-                            text: "🌤"; font.pixelSize: 18
+                            text: Icons.sun
+                            font.family: Icons.font
+                            font.pixelSize: 18
+                            color: adaptiveColors.iconColor
                         }
                         MouseArea {
                             anchors.fill: parent
@@ -758,8 +767,10 @@ Item {
                         /** Bell icon */
                         Text {
                             anchors.centerIn: parent
-                            text: "🔔"
+                            text: Notifications.list.length > 0 ? Icons.bellRinging : Icons.bell
+                            font.family: Icons.font
                             font.pixelSize: discreteMode ? 13 : 16
+                            color: adaptiveColors.iconColor
                             opacity: discreteMode ? (Notifications.list.length > 0 ? 0.7 : 1.0) : (Notifications.list.length === 0 ? 1 : 0)
                             
                             Behavior on font.pixelSize { NumberAnimation { duration: animDuration } }
@@ -787,10 +798,12 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: discreteMode ? 4 : 8
 
-                    // System tray (compact in discrete)
+                    // System tray (hidden in discrete mode)
                     Item {
-                        Layout.preferredWidth: discreteMode ? compactTrayLayout.implicitWidth : trayLayout.implicitWidth + 12
-                        Layout.preferredHeight: discreteMode ? 20 : 36
+                        Layout.preferredWidth: discreteMode ? 0 : trayLayout.implicitWidth + 12
+                        Layout.preferredHeight: discreteMode ? 0 : 36
+                        visible: !discreteMode
+                        clip: true
 
                         // Normal mode tray
                         RowLayout {
@@ -855,58 +868,6 @@ Item {
                                 }
                             }
                         }
-                        
-                        // Compact tray for discrete mode
-                        Row {
-                            id: compactTrayLayout
-                            anchors.centerIn: parent
-                            spacing: 4
-                            visible: discreteMode
-                            opacity: discreteMode ? 1 : 0
-                            
-                            Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
-                            
-                            Repeater {
-                                model: SystemTray.items
-                                delegate: MouseArea {
-                                    required property SystemTrayItem modelData
-                                    property string trayId: modelData.id
-                                    width: 16
-                                    height: 16
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-
-                                    onClicked: function(mouse) {
-                                        if (mouse.button === Qt.LeftButton) {
-                                            modelData.activate()
-                                        } else if (mouse.button === Qt.RightButton && modelData.hasMenu && notchContainer.parentWindow) {
-                                            notchContainer.activeTrayItem = trayId
-                                            notchContainer.trayMenuActive = true
-                                            trayMenuAnchor.menu = modelData.menu
-                                            var iconPos = mapToItem(null, width / 2, 0)
-                                            trayMenuAnchor.anchor.rect = Qt.rect(iconPos.x, iconPos.y, 1, 1)
-                                            trayMenuAnchor.open()
-                                        }
-                                    }
-
-                                    IconImage {
-                                        source: modelData.icon
-                                        anchors.centerIn: parent
-                                        implicitWidth: 16
-                                        implicitHeight: 16
-                                        visible: status === Image.Ready
-                                    }
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "●"
-                                        font.pixelSize: 10
-                                        color: adaptiveColors.iconColor
-                                        visible: parent.children[0].status !== Image.Ready
-                                    }
-                                }
-                            }
-                        }
                     }
 
                     // Status indicators - clickable for toolbar (hidden in discrete)
@@ -928,8 +889,10 @@ Item {
                                 width: 24; height: 24
                                 Text {
                                     anchors.centerIn: parent
-                                    text: Audio.muted || Audio.volume === 0 ? "🔇" : (Audio.volume < 0.33 ? "🔉" : "🔊")
-                                    font.pixelSize: 14
+                                    text: Icons.volumeIcon(Audio.volume, Audio.muted)
+                                    font.family: Icons.font
+                                    font.pixelSize: 16
+                                    color: adaptiveColors.iconColor
                                 }
                                 MouseArea {
                                     anchors.fill: parent
@@ -950,8 +913,10 @@ Item {
                                 width: 24; height: 24
                                 Text {
                                     anchors.centerIn: parent
-                                    text: Network.wifiEnabled ? (Network.wifiConnected ? "📶" : "📡") : "📵"
-                                    font.pixelSize: 14
+                                    text: Icons.wifiIcon(Network.networkStrength, Network.wifiEnabled, Network.wifiConnected)
+                                    font.family: Icons.font
+                                    font.pixelSize: 16
+                                    color: adaptiveColors.iconColor
                                 }
                             }
 
@@ -961,8 +926,10 @@ Item {
                                 visible: Bluetooth.enabled
                                 Text {
                                     anchors.centerIn: parent
-                                    text: Bluetooth.connected ? "🔷" : "📳"
-                                    font.pixelSize: 12
+                                    text: Icons.bluetoothIcon(Bluetooth.enabled, Bluetooth.connected)
+                                    font.family: Icons.font
+                                    font.pixelSize: 16
+                                    color: adaptiveColors.iconColor
                                 }
                             }
                         }
@@ -975,30 +942,54 @@ Item {
                         }
                     }
                     
-                    // Volume icon (discrete mode only, inline)
-                    Text {
+                    // Status icons (discrete mode only - volume, wifi, bluetooth)
+                    RowLayout {
                         Layout.preferredWidth: discreteMode ? implicitWidth : 0
                         Layout.preferredHeight: discreteMode ? implicitHeight : 0
-                        text: Audio.muted || Audio.volume === 0 ? "🔇" : (Audio.volume < 0.33 ? "🔉" : "🔊")
-                        font.pixelSize: 12
+                        spacing: 6
                         opacity: discreteMode ? 1 : 0
-                        clip: true
+                        visible: discreteMode
                         
                         Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
                         
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -4
-                            enabled: discreteMode
-                            onClicked: {
-                                Audio.toggleMute()
-                                notchContainer.showVolumeOverlay()
+                        // Volume
+                        Text {
+                            text: Icons.volumeIcon(Audio.volume, Audio.muted)
+                            font.family: Icons.font
+                            font.pixelSize: 14
+                            color: adaptiveColors.iconColor
+                            
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.margins: -4
+                                enabled: discreteMode
+                                onClicked: {
+                                    Audio.toggleMute()
+                                    notchContainer.showVolumeOverlay()
+                                }
+                                onWheel: function(wheel) {
+                                    if (wheel.angleDelta.y > 0) Audio.incrementVolume()
+                                    else Audio.decrementVolume()
+                                    notchContainer.showVolumeOverlay()
+                                }
                             }
-                            onWheel: function(wheel) {
-                                if (wheel.angleDelta.y > 0) Audio.incrementVolume()
-                                else Audio.decrementVolume()
-                                notchContainer.showVolumeOverlay()
-                            }
+                        }
+                        
+                        // WiFi
+                        Text {
+                            text: Icons.wifiIcon(Network.networkStrength, Network.wifiEnabled, Network.wifiConnected)
+                            font.family: Icons.font
+                            font.pixelSize: 14
+                            color: adaptiveColors.iconColor
+                        }
+                        
+                        // Bluetooth (only if enabled)
+                        Text {
+                            visible: Bluetooth.enabled
+                            text: Icons.bluetoothIcon(Bluetooth.enabled, Bluetooth.connected)
+                            font.family: Icons.font
+                            font.pixelSize: 14
+                            color: adaptiveColors.iconColor
                         }
                     }
 
@@ -1013,8 +1004,9 @@ Item {
 
                         Text {
                             anchors.centerIn: parent
-                            text: "⏻"
-                            font.pixelSize: 15
+                            text: Icons.shutdown
+                            font.family: Icons.font
+                            font.pixelSize: 16
                             color: powerMouse.containsMouse ? "#ff6b6b" : adaptiveColors.iconColor
                         }
 
@@ -1075,14 +1067,14 @@ Item {
     // ═══════════════════════════════════════════════════════════════
 
     /**
-     * BarHoverDetector - Detects mouse hover over the bar
+     * BarHoverDetector - Detects mouse hover directly over the bar
      * 
-     * Sets _realHover for internal BarBehavior.
+     * Sets _barHover which combines with externalHover for _realHover.
      * Also emits barHoverChanged signal for backwards compatibility.
      */
     BarHoverDetector {
         onHoverChanged: (hovering) => {
-            notchContainer._realHover = hovering
+            notchContainer._barHover = hovering
             notchContainer.barHoverChanged(hovering)
         }
     }

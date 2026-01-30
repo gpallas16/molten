@@ -34,6 +34,7 @@ Item {
     // ═══════════════════════════════════════════════════════════════
     
     property string internalState: "floating"
+    property bool temporaryShow: false  // Track if we're in temporary show mode
     readonly property bool barVisible: internalState !== "hidden"
     readonly property bool isCompact: {
         if (isExpanded || popupActive) return false
@@ -148,6 +149,7 @@ Item {
     onHasActiveWindowsChanged: {
         if (mode !== "dynamic") return
         if (isExpanded || popupActive) return
+        if (temporaryShow) return  // Don't override temporary show
         
         // Only change if not currently hovered
         if (!barHovered) {
@@ -182,6 +184,7 @@ Item {
     function showTemporarily() {
         if (mode === "floating") return  // Already always floating
         
+        temporaryShow = true
         internalState = "floating"
         tempTimer.restart()
     }
@@ -190,6 +193,7 @@ Item {
         id: tempTimer
         interval: root.hideDelay
         onTriggered: {
+            root.temporaryShow = false
             if (!root.popupActive && !root.isExpanded && !root.barHovered && !root.zoneHovered && !root.edgeHit) {
                 root.internalState = root.getRestState()
             }

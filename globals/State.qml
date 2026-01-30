@@ -75,6 +75,10 @@ Singleton {
 
     // Active workspace ID from native Hyprland binding
     readonly property int activeWorkspace: monitor?.activeWorkspace?.id ?? 1
+    
+    // Explicit signal for workspace changes (for reliable connections)
+    signal workspaceChanged(int newWorkspace)
+    onActiveWorkspaceChanged: workspaceChanged(activeWorkspace)
 
     // Total workspaces to show (configurable)
     property int workspaceCount: 10

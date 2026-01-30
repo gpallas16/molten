@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import "../../services"
+import "../../globals"
 
 /**
  * BrightnessOverlayWidget - Displays brightness control slider
@@ -41,12 +42,10 @@ RowLayout {
     // Brightness icon
     Text {
         id: brightnessIcon
-        text: {
-            if (root.brightness < 0.33) return "🔅"
-            if (root.brightness < 0.66) return "☀️"
-            return "🔆"
-        }
-        font.pixelSize: 18
+        text: root.brightness < 0.33 ? Icons.sunDim : Icons.sun
+        font.family: Icons.font
+        font.pixelSize: 20
+        color: root.textColor
         Layout.alignment: Qt.AlignVCenter
     }
     

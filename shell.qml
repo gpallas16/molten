@@ -172,6 +172,11 @@ ShellRoot {
                  "submap", "movewindow", "resizewindow"].includes(event.name)) {
                 root.resetActivityTimer()
             }
+            
+            // Show bar temporarily on workspace change
+            if (event.name === "workspace") {
+                mainBarContent.showTemporarily()
+            }
         }
     }
     
@@ -298,9 +303,9 @@ ShellRoot {
         // Note: Can't use exclusiveZone here - window is full-screen for click handling
         // Side bars handle the exclusive zone reservation
 
-        // Mask: full window when expanded, bar area otherwise
+        // Mask: full window when expanded, full-width bottom zone otherwise
         mask: Region {
-            item: mainBarContent.isExpanded ? fullWindowMask : mainBarMask
+            item: mainBarContent.isExpanded ? fullWindowMask : bottomHoverMask
         }
 
         // Full window mask for catching outside clicks when expanded
@@ -309,13 +314,13 @@ ShellRoot {
             anchors.fill: parent
         }
         
-        // Bar mask - covers just the bar area
+        // Full-width bottom hover mask - spans entire width for hover detection
         Item {
-            id: mainBarMask
-            anchors.horizontalCenter: parent.horizontalCenter
+            id: bottomHoverMask
+            anchors.left: parent.left
+            anchors.right: parent.right
             anchors.bottom: parent.bottom
-            width: mainBarRegionContainer.width + 20
-            height: mainBarRegionContainer.height + 20
+            height: mainBarContent.compactMode ? 40 : mainBarContent.implicitHeight + mainBarContent.barMargin + 20
         }
 
         // Click outside expanded main bar to close (full window area)
@@ -324,6 +329,24 @@ ShellRoot {
             z: -1
             visible: mainBarContent.isExpanded
             onClicked: mainBarContent.closeView()
+        }
+
+        // Full-width bottom hover zone for bar reveal
+        // Spans entire screen width at the same height as the bar
+        MouseArea {
+            id: bottomHoverZone
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: mainBarContent.compactMode ? 40 : mainBarContent.implicitHeight + mainBarContent.barMargin
+            hoverEnabled: true
+            propagateComposedEvents: true
+            acceptedButtons: Qt.NoButton
+            z: -1  // Below the bar itself
+            
+            onContainsMouseChanged: {
+                mainBarWindow.barIsHovered = containsMouse
+            }
         }
 
         // Container for the main bar region (for masking when collapsed)
@@ -353,6 +376,9 @@ ShellRoot {
                 mode: Config.mainBarMode
                 hasActiveWindows: mainBarWindow.hasActiveWindows
                 active: !root.isFullscreen
+                
+                // External hover from bottom zone
+                externalHover: mainBarWindow.barIsHovered
 
                 onCurrentViewChanged: {
                     root.currentScreen = currentView === "default" ? "none" : currentView
@@ -363,16 +389,8 @@ ShellRoot {
                 }
                 
                 onBarHoverChanged: (hovering) => {
-                    mainBarWindow.barIsHovered = hovering
+                    // No longer needed - using externalHover instead
                 }
-            }
-        }
-
-        // Auto-reveal when workspace changes
-        Connections {
-            target: Root.State
-            function onActiveWorkspaceChanged() {
-                mainBarContent.showTemporarily()
             }
         }
     }

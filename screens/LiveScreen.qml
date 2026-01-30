@@ -204,8 +204,10 @@ Item {
                     z: 1
 
                     Text {
-                        text: State.weatherIcon === "weather-clear" ? "☀️" : "🌤"
+                        text: State.weatherIcon === "weather-clear" ? Icons.sun : Icons.sun
+                        font.family: Icons.font
                         font.pixelSize: 28
+                        color: adaptiveColors.iconColor
                     }
 
                     Column {
@@ -249,12 +251,22 @@ Item {
                 RowLayout {
                     width: parent.width
 
-                    Text {
-                        text: "🔔 Notifications"
-                        color: adaptiveColors.textColor
-                        font.pixelSize: 14
-                        font.weight: Font.Medium
+                    RowLayout {
+                        spacing: 6
                         Layout.fillWidth: true
+                        
+                        Text {
+                            text: Icons.bell
+                            font.family: Icons.font
+                            font.pixelSize: 14
+                            color: adaptiveColors.iconColor
+                        }
+                        Text {
+                            text: "Notifications"
+                            color: adaptiveColors.textColor
+                            font.pixelSize: 14
+                            font.weight: Font.Medium
+                        }
                     }
 
                     // Do Not Disturb toggle
@@ -269,8 +281,10 @@ Item {
                             z: 1
 
                             Text {
-                                text: Notifications.doNotDisturb ? "🔕" : "🔔"
-                                font.pixelSize: 12
+                                text: Notifications.doNotDisturb ? Icons.bellSlash : Icons.bell
+                                font.family: Icons.font
+                                font.pixelSize: 14
+                                color: adaptiveColors.iconColor
                             }
                             Text {
                                 text: "DND"
@@ -294,8 +308,10 @@ Item {
                         
                         Text {
                             anchors.centerIn: parent
-                            text: "🗑"
-                            font.pixelSize: 12
+                            text: Icons.trash
+                            font.family: Icons.font
+                            font.pixelSize: 14
+                            color: adaptiveColors.iconColor
                             z: 1
                         }
 

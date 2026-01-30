@@ -64,10 +64,10 @@ Item {
 
             Repeater {
                 model: [
-                    { icon: "📶", label: "WiFi", prop: "wifiEnabled" },
-                    { icon: "🔷", label: "Bluetooth", prop: "bluetoothEnabled" },
-                    { icon: "☕", label: "Caffeine", prop: "caffeineMode" },
-                    { icon: "🎮", label: "Game Mode", prop: "gameMode" }
+                    { icon: Icons.wifiHigh, label: "WiFi", prop: "wifiEnabled" },
+                    { icon: Icons.bluetooth, label: "Bluetooth", prop: "bluetoothEnabled" },
+                    { icon: Icons.caffeine, label: "Caffeine", prop: "caffeineMode" },
+                    { icon: Icons.gamepad, label: "Game Mode", prop: "gameMode" }
                 ]
 
                 delegate: Item {
@@ -96,7 +96,9 @@ Item {
 
                         Text {
                             text: modelData.icon
+                            font.family: Icons.font
                             font.pixelSize: 22
+                            color: isEnabled ? adaptiveColors.textColor : adaptiveColors.subtleTextColor
                             anchors.horizontalCenter: parent.horizontalCenter
                         }
                         Text {
@@ -132,8 +134,10 @@ Item {
                 width: parent.width
 
                 Text {
-                    text: "☀️"
-                    font.pixelSize: 16
+                    text: Icons.sun
+                    font.family: Icons.font
+                    font.pixelSize: 18
+                    color: adaptiveColors.iconColor
                 }
                 Text {
                     text: "Brightness"
@@ -222,13 +226,10 @@ Item {
 
                 Text {
                     id: volumeIconText
-                    text: {
-                        if (Audio.muted || Audio.volume === 0) return "🔇"
-                        if (Audio.volume < 0.33) return "🔉"
-                        if (Audio.volume < 0.66) return "🔊"
-                        return "🔊"
-                    }
-                    font.pixelSize: 16
+                    text: Icons.volumeIcon(Audio.volume, Audio.muted)
+                    font.family: Icons.font
+                    font.pixelSize: 18
+                    color: adaptiveColors.iconColor
                     
                     MouseArea {
                         anchors.fill: parent
@@ -436,42 +437,174 @@ Item {
             spacing: 8
             
             // Screenshot
-            ToolButton {
-                icon: "📷"
-                label: "Screenshot"
-                onClicked: {
-                    root.closeRequested()
-                    Screenshot.capture("area")
+            Item {
+                width: (parent.width - 24) / 4
+                height: 60
+                
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 10
+                    color: adaptiveColors.textColor
+                    opacity: screenshotMouse.containsMouse ? 0.12 : 0.06
+                }
+                
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 4
+                    
+                    Text {
+                        text: Icons.regionScreenshot
+                        font.family: Icons.font
+                        font.pixelSize: 20
+                        color: adaptiveColors.iconColor
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                    Text {
+                        text: "Screenshot"
+                        color: adaptiveColors.textColor
+                        font.pixelSize: 10
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                }
+                
+                MouseArea {
+                    id: screenshotMouse
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    hoverEnabled: true
+                    onClicked: {
+                        root.closeRequested()
+                        Screenshot.capture("area")
+                    }
                 }
             }
             
             // Screen Record
-            ToolButton {
-                icon: "🔴"
-                label: "Record"
-                onClicked: {
-                    root.closeRequested()
-                    screenRecordDelayTimer.start()
+            Item {
+                width: (parent.width - 24) / 4
+                height: 60
+                
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 10
+                    color: adaptiveColors.textColor
+                    opacity: recordMouse.containsMouse ? 0.12 : 0.06
+                }
+                
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 4
+                    
+                    Text {
+                        text: Icons.recordScreen
+                        font.family: Icons.font
+                        font.pixelSize: 20
+                        color: adaptiveColors.iconColor
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                    Text {
+                        text: "Record"
+                        color: adaptiveColors.textColor
+                        font.pixelSize: 10
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                }
+                
+                MouseArea {
+                    id: recordMouse
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    hoverEnabled: true
+                    onClicked: {
+                        root.closeRequested()
+                        screenRecordDelayTimer.start()
+                    }
                 }
             }
             
             // Color Picker
-            ToolButton {
-                icon: "🎨"
-                label: "Color"
-                onClicked: {
-                    root.closeRequested()
-                    colorPickerDelayTimer.start()
+            Item {
+                width: (parent.width - 24) / 4
+                height: 60
+                
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 10
+                    color: adaptiveColors.textColor
+                    opacity: colorMouse.containsMouse ? 0.12 : 0.06
+                }
+                
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 4
+                    
+                    Text {
+                        text: Icons.picker
+                        font.family: Icons.font
+                        font.pixelSize: 20
+                        color: adaptiveColors.iconColor
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                    Text {
+                        text: "Color"
+                        color: adaptiveColors.textColor
+                        font.pixelSize: 10
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                }
+                
+                MouseArea {
+                    id: colorMouse
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    hoverEnabled: true
+                    onClicked: {
+                        root.closeRequested()
+                        colorPickerDelayTimer.start()
+                    }
                 }
             }
             
             // OCR
-            ToolButton {
-                icon: "📝"
-                label: "OCR"
-                onClicked: {
-                    root.closeRequested()
-                    ocrDelayTimer.start()
+            Item {
+                width: (parent.width - 24) / 4
+                height: 60
+                
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 10
+                    color: adaptiveColors.textColor
+                    opacity: ocrMouse.containsMouse ? 0.12 : 0.06
+                }
+                
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 4
+                    
+                    Text {
+                        text: Icons.textT
+                        font.family: Icons.font
+                        font.pixelSize: 20
+                        color: adaptiveColors.iconColor
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                    Text {
+                        text: "OCR"
+                        color: adaptiveColors.textColor
+                        font.pixelSize: 10
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                }
+                
+                MouseArea {
+                    id: ocrMouse
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    hoverEnabled: true
+                    onClicked: {
+                        root.closeRequested()
+                        ocrDelayTimer.start()
+                    }
                 }
             }
         }
@@ -603,8 +736,10 @@ Item {
                                 spacing: 10
 
                                 Text {
-                                    text: "🔊"
-                                    font.pixelSize: 14
+                                    text: Icons.speakerHigh
+                                    font.family: Icons.font
+                                    font.pixelSize: 16
+                                    color: adaptiveColors.iconColor
                                     opacity: isSelected ? 1 : 0.6
                                 }
                                 Text {
@@ -616,7 +751,8 @@ Item {
                                     elide: Text.ElideRight
                                 }
                                 Text {
-                                    text: "✓"
+                                    text: Icons.accept
+                                    font.family: Icons.font
                                     color: adaptiveColors.textColor
                                     font.pixelSize: 14
                                     visible: isSelected
@@ -766,8 +902,10 @@ Item {
                                 spacing: 10
 
                                 Text {
-                                    text: "🎙️"
-                                    font.pixelSize: 14
+                                    text: Icons.mic
+                                    font.family: Icons.font
+                                    font.pixelSize: 16
+                                    color: adaptiveColors.iconColor
                                     opacity: isSelected ? 1 : 0.6
                                 }
                                 Text {
@@ -779,7 +917,8 @@ Item {
                                     elide: Text.ElideRight
                                 }
                                 Text {
-                                    text: "✓"
+                                    text: Icons.accept
+                                    font.family: Icons.font
                                     color: adaptiveColors.textColor
                                     font.pixelSize: 14
                                     visible: isSelected
@@ -800,54 +939,6 @@ Item {
                     }
                 }
             }
-        }
-    }
-    
-    // ═══════════════════════════════════════════════════════════════
-    // TOOL BUTTON COMPONENT
-    // ═══════════════════════════════════════════════════════════════
-    component ToolButton: Item {
-        property string icon
-        property string label
-        signal clicked()
-        
-        width: (parent.width - 24) / 4
-        height: 60
-        
-        Rectangle {
-            anchors.fill: parent
-            radius: 10
-            color: adaptiveColors.textColor
-            opacity: toolMouse.containsMouse ? 0.12 : 0.06
-            
-            Behavior on opacity {
-                NumberAnimation { duration: 100 }
-            }
-        }
-        
-        Column {
-            anchors.centerIn: parent
-            spacing: 4
-            
-            Text {
-                text: icon
-                font.pixelSize: 20
-                anchors.horizontalCenter: parent.horizontalCenter
-            }
-            Text {
-                text: label
-                color: adaptiveColors.textColor
-                font.pixelSize: 10
-                anchors.horizontalCenter: parent.horizontalCenter
-            }
-        }
-        
-        MouseArea {
-            id: toolMouse
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            hoverEnabled: true
-            onClicked: parent.clicked()
         }
     }
     
