@@ -21,8 +21,8 @@
 
 CLiquidGlassDecoration::CLiquidGlassDecoration(PHLWINDOW pWindow)
     : IHyprWindowDecoration(pWindow), m_pWindow(pWindow) {
-    // Disable Hyprland's built-in blur - we handle it ourselves
-    pWindow->m_windowData.noBlur = true;
+    // Let Hyprland handle the blur - it's multi-pass and much better quality
+    // We just add the glass effects on top
 }
 
 // ============================================================================
@@ -342,11 +342,6 @@ void CLiquidGlassDecoration::renderPass(PHLMONITOR pMonitor, const float& a) {
         ? PWORKSPACE->m_renderOffset->value() 
         : Vector2D();
     
-    // Get the current framebuffer (what we're rendering to)
-    CFramebuffer* TARGET = g_pHyprOpenGL->m_renderData.currentFB;
-    if (!TARGET || !TARGET->isAllocated())
-        return;
-
     // Calculate window box
     auto thisbox = PWINDOW->getWindowMainSurfaceBox();
 
@@ -354,6 +349,7 @@ void CLiquidGlassDecoration::renderPass(PHLMONITOR pMonitor, const float& a) {
                       .translate(-pMonitor->m_position + PWINDOW->m_floatingOffset)
                       .scale(pMonitor->m_scale)
                       .round();
+
     CBox transformBox = wlrbox;
 
     // Apply monitor transform
@@ -363,7 +359,12 @@ void CLiquidGlassDecoration::renderPass(PHLMONITOR pMonitor, const float& a) {
         g_pHyprOpenGL->m_renderData.pMonitor->m_transformedSize.x,
         g_pHyprOpenGL->m_renderData.pMonitor->m_transformedSize.y);
 
-    // Sample background from current FB to our own buffer
+    // Get the current target framebuffer
+    CFramebuffer* TARGET = g_pHyprOpenGL->m_renderData.currentFB;
+    if (!TARGET || !TARGET->isAllocated())
+        return;
+
+    // Sample the background from the current framebuffer so windows behind are included
     sampleBackground(*TARGET, transformBox);
     
     // Calculate and report luminance for adaptive colors
@@ -372,7 +373,7 @@ void CLiquidGlassDecoration::renderPass(PHLMONITOR pMonitor, const float& a) {
         reportLuminance(PWINDOW->m_title, luminance);
     }
     
-    // Apply effect: read from our sample buffer, write to target
+    // Apply glass effects on top
     applyLiquidGlassEffect(m_sampleFB, *TARGET, wlrbox, transformBox, a);
 }
 

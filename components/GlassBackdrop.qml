@@ -173,16 +173,19 @@ Item {
                 glassWindow.updatePosition()
                 var titlePattern = "title:^molten-glass-" + root.backdropName + "$"
                 Hyprland.dispatch("exec hyprctl setprop " + titlePattern + " rounding " + Math.round(internal.animRadius))
+            Item {
+                id: borderOverlay
+                anchors.fill: parent
+                z: 9999
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: internal.animRadius
+                    color: "transparent"
+                    border.width: 2
+                    border.color: Qt.rgba(1, 1, 1, 0.6)
+                }
             }
-        }
-        
-        onImplicitWidthChanged: if (windowReady) updatePosition()
-        onImplicitHeightChanged: if (windowReady) updatePosition()
-        
-        Timer {
-            interval: 16
-            repeat: true
-            running: glassWindow.visible && glassWindow.windowReady
             onTriggered: glassWindow.updatePosition()
         }
         
@@ -270,6 +273,7 @@ Item {
                 NumberAnimation { duration: root.animationDuration; easing.type: root.easingType }
             }
         }
+        
     }
     
     // Update Hyprland window rounding when radius changes
@@ -279,7 +283,6 @@ Item {
             Hyprland.dispatch("exec hyprctl setprop " + titlePattern + " rounding " + Math.round(internal.animRadius))
         }
     }
-    
     // ═══════════════════════════════════════════════════════════════
     // SHADOW BORDER - Visual background with shadow
     // ═══════════════════════════════════════════════════════════════
@@ -335,4 +338,8 @@ Item {
             }
         }
     }
+
+       
+    // ═══════════════════════════════════════════════════════════════
 }
+

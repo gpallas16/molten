@@ -34,10 +34,10 @@ std::optional<CBox> CLiquidGlassPassElement::boundingBox() {
 }
 
 bool CLiquidGlassPassElement::needsLiveBlur() {
-    // We handle our own blur in the shader
-    return false;
+    // Request Hyprland's blur - it's multi-pass and high quality
+    return true;
 }
 
 bool CLiquidGlassPassElement::needsPrecomputeBlur() {
-    return false;
+    return true;
 }

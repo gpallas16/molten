@@ -2,14 +2,11 @@
 precision highp float;
 
 /*
- * Apple-style Liquid Glass Fragment Shader
+ * Liquid Glass Fragment Shader
+ * Based on OverShifted/LiquidGlass implementation
+ * Adapted for arbitrary window shapes using SDF
  * 
- * Implements the key visual elements of Apple's iOS 26 Liquid Glass design:
- * 1. Edge refraction with displacement mapping
- * 2. Chromatic aberration (RGB channel separation)
- * 3. Fresnel effect (edge glow based on viewing angle)
- * 4. Specular highlights (sharp light reflections)
- * 5. Subtle interior blur for glass thickness
+ * Refraction profile: f(x) = 1 - b * (c * e)^(-d * x - a)
  */
 
 // Uniforms
@@ -20,461 +17,262 @@ uniform vec2 fullSizeUntransformed;
 uniform float radius;
 uniform float time;
 
-// Configurable parameters
-uniform float blurStrength;        // Interior blur amount (0.0 - 2.0)
-uniform float refractionStrength;  // Edge refraction intensity (0.0 - 0.15)
-uniform float chromaticAberration; // RGB separation amount (0.0 - 0.02)
-uniform float fresnelStrength;     // Edge glow intensity (0.0 - 1.0)
-uniform float specularStrength;    // Highlight brightness (0.0 - 1.0)
-uniform float glassOpacity;        // Overall glass opacity (0.0 - 1.0)
-uniform float edgeThickness;       // How thick the refractive edge is (0.0 - 0.3)
+// Configurable parameters (matching OverShifted defaults from image)
+uniform float blurStrength;        // Not used in OverShifted style - blur done externally
+uniform float refractionStrength;  // Maps to fPower
+uniform float chromaticAberration; // Not in original, kept for compatibility
+uniform float fresnelStrength;     // Maps to glowWeight
+uniform float specularStrength;    // Maps to glowBias
+uniform float glassOpacity;        // Overall opacity
+uniform float edgeThickness;       // Maps to powerFactor for shape
 
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
 
 // Constants
-const float PI = 3.14159265359;
-const float AA_EDGE = 0.002; // Anti-aliasing edge softness
+const float M_E = 2.718281828459045;
+const float M_PI = 3.14159265359;
+const float AA_EDGE = 0.002;
+
+// ============================================================================
+// Refraction parameters (from image defaults)
+// f(x) = 1 - b * (c * e)^(-d * x - a)
+// ============================================================================
+const float u_a = 0.700;
+const float u_b = 2.300;
+const float u_c = 2.235;
+const float u_d = 3.077;
+const float u_fPower = 1.000;
+const float u_powerFactor = 2.0;  // Shape power (superellipse exponent)
+const float u_noise = 0.060;
+
+// Glow parameters (from image)
+const float u_glowWeight = 0.380;
+const float u_glowBias = -0.097;
+const float u_glowEdge0 = 0.500;
+const float u_glowEdge1 = -0.500;
 
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
 
-// Compute signed distance to rounded rectangle (in UV space)
+// Signed distance to a superellipse (generalized rounded shape)
+// n = 2.0 gives a circle/ellipse, n > 2 gives squircle, n < 2 gives star
+float sdSuperellipse(vec2 p, float n, float r) {
+    vec2 p_abs = abs(p);
+    
+    // Numerator: |x|^n + |y|^n - r^n
+    float numerator = pow(p_abs.x, n) + pow(p_abs.y, n) - pow(r, n);
+    
+    // Denominator: n * sqrt(|x|^(2n-2) + |y|^(2n-2))
+    float den_x = pow(p_abs.x + 0.00001, 2.0 * n - 2.0);
+    float den_y = pow(p_abs.y + 0.00001, 2.0 * n - 2.0);
+    float denominator = n * sqrt(den_x + den_y) + 0.00001;
+    
+    return numerator / denominator;
+}
+
+// Standard rounded box SDF for window shape
 float roundedBoxSDF(vec2 p, vec2 halfSize, float r) {
     vec2 q = abs(p) - halfSize + r;
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
-// Get alpha mask for rounded corners
-float getRoundedAlpha(vec2 uv) {
-    vec2 center = vec2(0.5);
-    vec2 pos = uv - center;
-    
-    // Convert radius from pixels to UV space, accounting for aspect ratio
-    float aspectRatio = fullSize.x / fullSize.y;
-    vec2 scaledPos = pos * vec2(aspectRatio, 1.0);
-    
-    // Half size in UV space
-    vec2 halfSize = vec2(0.5 * aspectRatio, 0.5);
-    
-    // Radius in UV space (approximate)
-    float uvRadius = radius / fullSize.y;
-    
-    float dist = roundedBoxSDF(scaledPos, halfSize, uvRadius);
-    
-    // Smooth edge for anti-aliasing
-    return 1.0 - smoothstep(-AA_EDGE, AA_EDGE, dist);
+// Refraction function from OverShifted
+// f(x) = 1 - b * (c * e)^(-d * x - a)
+float refractionF(float x) {
+    return 1.0 - u_b * pow(u_c * M_E, -u_d * x - u_a);
 }
 
-// Smooth edge mask with configurable falloff
-float getEdgeMask(vec2 uv, float thickness) {
-    vec2 center = vec2(0.5);
-    vec2 pos = uv - center;
-    
-    // Account for aspect ratio
-    float aspectRatio = fullSize.x / fullSize.y;
-    vec2 scaledPos = pos * vec2(aspectRatio, 1.0);
-    vec2 halfSize = vec2(0.5 * aspectRatio, 0.5);
-    
-    // Radius in UV space
-    float uvRadius = radius / fullSize.y;
-    
-    // Compute distance from inner edge
-    float innerThickness = thickness * min(aspectRatio, 1.0);
-    float dist = roundedBoxSDF(scaledPos, halfSize - innerThickness, max(uvRadius - innerThickness, 0.0));
-    
-    // Create smooth gradient from edge to center
-    float edgeFactor = smoothstep(-thickness * 0.5, thickness * 0.5, dist);
-    return clamp(edgeFactor, 0.0, 1.0);
+// Random noise
+float rand(vec2 co) {
+    return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
-// Get signed distance from edge (negative = inside, positive = outside)
-float getEdgeDistance(vec2 uv) {
-    vec2 center = vec2(0.5);
-    vec2 pos = uv - center;
-    
-    float aspectRatio = fullSize.x / fullSize.y;
-    vec2 scaledPos = pos * vec2(aspectRatio, 1.0);
-    vec2 halfSize = vec2(0.5 * aspectRatio, 0.5);
-    float uvRadius = radius / fullSize.y;
-    
-    return roundedBoxSDF(scaledPos, halfSize, uvRadius);
+// Glow function - directional shine based on angle
+float Glow(vec2 uv) {
+    return sin(atan(uv.y * 2.0 - 1.0, uv.x * 2.0 - 1.0) - 0.5);
 }
 
-// Get the direction pointing toward the nearest edge (normalized)
+// Get edge normal (gradient of SDF) for lighting calculations
 vec2 getEdgeNormal(vec2 uv) {
     vec2 center = vec2(0.5);
-    vec2 pos = uv - center;
-    
+    vec2 p = (uv - center) * 2.0;
     float aspectRatio = fullSize.x / fullSize.y;
-    vec2 scaledPos = pos * vec2(aspectRatio, 1.0);
-    vec2 halfSize = vec2(0.5 * aspectRatio, 0.5);
-    float uvRadius = radius / fullSize.y;
+    vec2 scaledP = p * vec2(aspectRatio, 1.0);
+    vec2 halfSize = vec2(aspectRatio, 1.0);
+    float uvRadius = (radius / fullSize.y) * 2.0;
     
-    // Compute gradient of SDF for normal direction
-    float eps = 0.001;
-    float d = roundedBoxSDF(scaledPos, halfSize, uvRadius);
-    float dx = roundedBoxSDF(scaledPos + vec2(eps, 0.0), halfSize, uvRadius) - d;
-    float dy = roundedBoxSDF(scaledPos + vec2(0.0, eps), halfSize, uvRadius) - d;
+    // Compute gradient via finite differences
+    float eps = 0.002;
+    float d = roundedBoxSDF(scaledP, halfSize, uvRadius);
+    float dx = roundedBoxSDF(scaledP + vec2(eps, 0.0), halfSize, uvRadius) - d;
+    float dy = roundedBoxSDF(scaledP + vec2(0.0, eps), halfSize, uvRadius) - d;
     
     vec2 normal = normalize(vec2(dx, dy) + 0.0001);
-    // Convert back from aspect-corrected space
-    normal.x /= aspectRatio;
-    return normalize(normal);
+    return normal;
 }
 
-// Generate refraction displacement based on edge proximity
-vec2 getRefractionOffset(vec2 uv, float edgeMask) {
+// ============================================================================
+// SHAPE DISTANCE CALCULATION
+// Adapts to window shape using rounded rectangle SDF
+// ============================================================================
+
+float getShapeDistance(vec2 uv) {
     vec2 center = vec2(0.5);
-    vec2 fromCenter = uv - center;
-    float dist = length(fromCenter);
+    vec2 p = (uv - center) * 2.0;  // Map to -1..1
     
-    // Direction from center, normalized
-    vec2 dir = normalize(fromCenter + 0.0001);
+    float aspectRatio = fullSize.x / fullSize.y;
     
-    // Refraction is stronger at edges (like looking through curved glass)
-    // Use a sine-based curve for more natural glass-like distortion
-    float refractionAmount = edgeMask * sin(edgeMask * PI * 0.5);
+    // Scale to match window aspect ratio
+    vec2 scaledP = p * vec2(aspectRatio, 1.0);
+    vec2 halfSize = vec2(aspectRatio, 1.0);
     
-    // Add subtle wave distortion for liquid feel
-    float wave = sin(dist * 8.0 + time * 0.5) * 0.1 + 1.0;
+    // Radius in normalized space
+    float uvRadius = (radius / fullSize.y) * 2.0;
     
-    return dir * refractionAmount * refractionStrength * wave;
+    // Use rounded box SDF for window shape
+    return roundedBoxSDF(scaledP, halfSize, uvRadius);
+}
+
+// For superellipse-based inner distance (used in refraction)
+float getSuperellipseDistance(vec2 p, float power) {
+    // p should be in -1..1 range
+    return sdSuperellipse(p, power, 1.0);
 }
 
 // ============================================================================
-// 3D BORDER REFRACTION - Creates depth illusion at edges
+// MAIN LIQUID GLASS FUNCTION
+// Based on OverShifted's LiquidGlass() function
+// Adapted to use rounded rectangle SDF for proper rectangular refraction
 // ============================================================================
 
-// Calculate border refraction for 3D depth effect
-// Simulates light bending through the thick edge of glass
-vec2 getBorderRefraction(vec2 uv, float borderWidth) {
-    float edgeDist = getEdgeDistance(uv);
-    vec2 edgeNormal = getEdgeNormal(uv);
-    
-    // Define the border zone with soft falloff
-    float innerEdge = -borderWidth;
-    float outerEdge = 0.0;
-    
-    // Smooth falloff factor (1.0 in border, fades to 0 outside)
-    // Use smoothstep for gradual transition at inner edge
-    float innerFalloff = smoothstep(innerEdge - borderWidth * 0.5, innerEdge + borderWidth * 0.3, edgeDist);
-    float outerFalloff = 1.0 - smoothstep(outerEdge - borderWidth * 0.1, outerEdge, edgeDist);
-    float falloff = innerFalloff * outerFalloff;
-    
-    // Normalized position within border (0 = inner edge, 1 = outer edge)
-    float borderPos = clamp((edgeDist - innerEdge) / (outerEdge - innerEdge), 0.0, 1.0);
-    
-    // Create a smooth lens-like refraction profile
-    // Use smoothstep-based curve instead of sin for softer transitions
-    float refractionProfile = borderPos * (1.0 - borderPos) * 4.0; // Parabolic, peaks at 0.5
-    
-    // Stronger asymmetry for more visible distortion
-    float asymmetry = mix(0.7, 1.6, borderPos);
-    refractionProfile *= asymmetry;
-    
-    // Smooth direction change from inward to outward
-    float refractionDir = smoothstep(0.0, 1.0, borderPos) * 2.0 - 1.0;
-    
-    // INCREASED strength for more visible liquid warping
-    float strength = refractionProfile * refractionDir * refractionStrength * 4.0 * falloff;
-    
-    return edgeNormal * strength;
-}
-
-// Enhanced refraction for liquid flowing effect across entire surface
-vec2 getLiquidRefraction(vec2 uv, float borderWidth) {
+vec4 LiquidGlass(vec2 uv) {
     vec2 center = vec2(0.5);
-    vec2 fromCenter = uv - center;
-    float dist = length(fromCenter);
     
-    // Get edge distance for varying refraction
-    float edgeDist = getEdgeDistance(uv);
-    vec2 edgeNormal = getEdgeNormal(uv);
+    // Get window shape distance for clipping
+    float shapeDist = getShapeDistance(uv);
     
-    // Combine radial and edge-based refraction for flowing liquid effect
-    vec2 radialDir = normalize(fromCenter + 0.0001);
+    // Discard pixels outside the window shape
+    if (shapeDist > 0.0) {
+        discard;
+    }
     
-    // Distance-based refraction (stronger near edges)
-    float distFactor = smoothstep(0.0, 0.5, dist);
+    // Use the actual rounded rectangle distance for refraction
+    // This ensures refraction follows the window shape, not a circle
+    float aspectRatio = fullSize.x / fullSize.y;
     
-    // Static wave pattern for liquid appearance (no animation)
-    float wave1 = sin(dist * 10.0 + uv.x * 5.0) * 0.5 + 0.5;
-    float wave2 = cos(dist * 8.0 + uv.y * 5.0) * 0.5 + 0.5;
-    float wavePattern = mix(wave1, wave2, 0.5);
+    // Distance from edge (positive inside) - use rounded rect SDF
+    // shapeDist is negative inside, so -shapeDist is positive inside
+    float dist = -shapeDist;
     
-    // Combine directions for complex liquid flow
-    vec2 flowDir = mix(radialDir, edgeNormal, 0.3);
+    // Normalize distance relative to window size for consistent refraction
+    // Use the smaller dimension as reference
+    float normalizedDist = dist * min(aspectRatio, 1.0 / aspectRatio) * 2.0;
     
-    // Variable strength across surface
-    float flowStrength = distFactor * wavePattern * refractionStrength * 2.5;
+    // Apply refraction function
+    float fx = refractionF(normalizedDist);
     
-    return flowDir * flowStrength;
-}
-
-// Sample with border refraction for 3D depth
-vec3 sampleWithBorderRefraction(vec2 uv, vec2 texelSize, float borderWidth) {
-    vec2 borderOffset = getBorderRefraction(uv, borderWidth);
-    vec2 sampleUV = clamp(uv + borderOffset, 0.001, 0.999);
-    return texture(tex, sampleUV).rgb;
-}
-
-// Chromatic border refraction - each color channel refracts differently
-vec3 chromaticBorderSample(vec2 uv, vec2 texelSize, float borderWidth) {
-    vec2 borderOffset = getBorderRefraction(uv, borderWidth);
-    vec2 edgeNormal = getEdgeNormal(uv);
+    // Map UV to centered coordinates for scaling
+    vec2 p = (uv - center) * 2.0;
     
-    // Slight chromatic separation at the border
-    float caStrength = chromaticAberration * 0.5;
-    vec2 offsetR = borderOffset + edgeNormal * caStrength * 0.8;
-    vec2 offsetG = borderOffset;
-    vec2 offsetB = borderOffset - edgeNormal * caStrength * 1.2;
+    // Scale the sample position based on refraction
+    // The scaling pulls inward from edges uniformly
+    vec2 sampleP = p * pow(fx, u_fPower);
     
-    float r = texture(tex, clamp(uv + offsetR, 0.001, 0.999)).r;
-    float g = texture(tex, clamp(uv + offsetG, 0.001, 0.999)).g;
-    float b = texture(tex, clamp(uv + offsetB, 0.001, 0.999)).b;
+    // Calculate target UV coordinates
+    vec2 targetUV = sampleP * 0.5 + vec2(0.5);
     
-    return vec3(r, g, b);
-}
-
-// ============================================================================
-// BLUR FUNCTION - Gaussian approximation
-// ============================================================================
-
-vec3 gaussianBlur(vec2 uv, vec2 texelSize, float strength) {
-    // 9-tap Gaussian blur
-    vec3 result = texture(tex, uv).rgb * 0.1633;
+    // Clamp to valid texture coordinates
+    targetUV = clamp(targetUV, 0.001, 0.999);
     
-    vec2 off1 = texelSize * strength;
-    vec2 off2 = texelSize * strength * 2.0;
+    // Sample the background texture
+    vec4 color = texture(tex, targetUV);
     
-    result += texture(tex, uv + vec2(off1.x, 0.0)).rgb * 0.1531;
-    result += texture(tex, uv - vec2(off1.x, 0.0)).rgb * 0.1531;
-    result += texture(tex, uv + vec2(0.0, off1.y)).rgb * 0.1531;
-    result += texture(tex, uv - vec2(0.0, off1.y)).rgb * 0.1531;
-    result += texture(tex, uv + vec2(off2.x, 0.0)).rgb * 0.0561;
-    result += texture(tex, uv - vec2(off2.x, 0.0)).rgb * 0.0561;
-    result += texture(tex, uv + vec2(0.0, off2.y)).rgb * 0.0561;
-    result += texture(tex, uv - vec2(0.0, off2.y)).rgb * 0.0561;
+    // Add noise for texture
+    vec4 noise = vec4(vec3(rand(gl_FragCoord.xy * 1e-3) - 0.5), 0.0);
+    color += noise * u_noise;
     
-    return result;
-}
-
-// Simpler 5-tap blur for performance with bounds clamping
-vec3 fastBlur(vec2 uv, vec2 texelSize, float strength) {
-    // Clamp all samples to valid UV range to prevent flickering
-    vec2 off1 = vec2(1.3846153846) * texelSize * strength;
-    vec2 off2 = vec2(3.2307692308) * texelSize * strength;
+    // Apply glow effect
+    float glowValue = Glow(uv);
+    float glowMask = smoothstep(u_glowEdge0, u_glowEdge1, normalizedDist);
+    float mul = glowValue * u_glowWeight * glowMask + 1.0 + u_glowBias;
     
-    vec3 result = texture(tex, clamp(uv, 0.0, 1.0)).rgb * 0.2270270270;
-    result += texture(tex, clamp(uv + off1, 0.0, 1.0)).rgb * 0.3162162162;
-    result += texture(tex, clamp(uv - off1, 0.0, 1.0)).rgb * 0.3162162162;
-    result += texture(tex, clamp(uv + off2, 0.0, 1.0)).rgb * 0.0702702703;
-    result += texture(tex, clamp(uv - off2, 0.0, 1.0)).rgb * 0.0702702703;
+    color.rgb *= mul;
     
-    return result;
+    return color;
 }
 
 // ============================================================================
-// COLOR SMOOTHING - Create water-like fluid appearance
-// ============================================================================
-
-// Smooth colors to create flowing gradients instead of sharp patterns
-vec3 waterBlend(vec2 uv, vec2 texelSize, float radius) {
-    vec3 result = vec3(0.0);
-    float totalWeight = 0.0;
-    
-    // Sample in a wider radius to blend colors smoothly
-    float r = radius * 8.0;
-    
-    // Center sample
-    vec3 center = texture(tex, clamp(uv, 0.0, 1.0)).rgb;
-    result += center * 0.25;
-    totalWeight += 0.25;
-    
-    // Ring 1 - close samples
-    result += texture(tex, clamp(uv + vec2(r, 0.0) * texelSize, 0.0, 1.0)).rgb * 0.12;
-    result += texture(tex, clamp(uv - vec2(r, 0.0) * texelSize, 0.0, 1.0)).rgb * 0.12;
-    result += texture(tex, clamp(uv + vec2(0.0, r) * texelSize, 0.0, 1.0)).rgb * 0.12;
-    result += texture(tex, clamp(uv - vec2(0.0, r) * texelSize, 0.0, 1.0)).rgb * 0.12;
-    totalWeight += 0.48;
-    
-    // Ring 2 - medium samples (diagonals)
-    float r2 = r * 0.707; // sqrt(2)/2
-    result += texture(tex, clamp(uv + vec2(r2, r2) * texelSize, 0.0, 1.0)).rgb * 0.08;
-    result += texture(tex, clamp(uv - vec2(r2, r2) * texelSize, 0.0, 1.0)).rgb * 0.08;
-    result += texture(tex, clamp(uv + vec2(r2, -r2) * texelSize, 0.0, 1.0)).rgb * 0.08;
-    result += texture(tex, clamp(uv - vec2(r2, -r2) * texelSize, 0.0, 1.0)).rgb * 0.08;
-    totalWeight += 0.32;
-    
-    // Ring 3 - far samples for color flow
-    float r3 = r * 1.5;
-    result += texture(tex, clamp(uv + vec2(r3, 0.0) * texelSize, 0.0, 1.0)).rgb * 0.03;
-    result += texture(tex, clamp(uv - vec2(r3, 0.0) * texelSize, 0.0, 1.0)).rgb * 0.03;
-    result += texture(tex, clamp(uv + vec2(0.0, r3) * texelSize, 0.0, 1.0)).rgb * 0.03;
-    result += texture(tex, clamp(uv - vec2(0.0, r3) * texelSize, 0.0, 1.0)).rgb * 0.03;
-    totalWeight += 0.12;
-    
-    return result / totalWeight;
-}
-
-// Multi-pass smoothing for water-like fluidity
-vec3 fluidSmooth(vec2 uv, vec2 texelSize, float strength) {
-    // First pass - wide color averaging
-    vec3 smooth1 = waterBlend(uv, texelSize, strength);
-    
-    // Second pass - blend with nearby colors for flow
-    vec3 smooth2 = waterBlend(uv, texelSize, strength * 0.5);
-    
-    // Combine both passes for smooth gradients
-    return mix(smooth2, smooth1, 0.5);
-}
-
-// ============================================================================
-// CHROMATIC ABERRATION
-// ============================================================================
-
-vec3 chromaticSample(vec2 uv, vec2 texelSize, float edgeMask) {
-    // Different refraction amounts for each color channel
-    // Red bends least, blue bends most (like real glass)
-    float caAmount = chromaticAberration * edgeMask;
-    
-    vec2 center = vec2(0.5);
-    vec2 dir = normalize(uv - center + 0.0001);
-    
-    vec2 offsetR = dir * caAmount * 0.8;
-    vec2 offsetG = vec2(0.0);  // Green is reference
-    vec2 offsetB = dir * caAmount * 1.2;
-    
-    // Clamp all samples to prevent edge artifacts
-    float r = texture(tex, clamp(uv + offsetR, 0.0, 1.0)).r;
-    float g = texture(tex, clamp(uv + offsetG, 0.0, 1.0)).g;
-    float b = texture(tex, clamp(uv + offsetB, 0.0, 1.0)).b;
-    
-    return vec3(r, g, b);
-}
-
-// ============================================================================
-// FRESNEL EFFECT - Edge glow based on viewing angle
-// ============================================================================
-
-float fresnelEffect(vec2 uv) {
-    vec2 center = vec2(0.5);
-    vec2 pos = uv - center;
-    
-    // Distance from center, normalized
-    float dist = length(pos) * 2.0;
-    
-    // Fresnel approximation: stronger reflection at grazing angles
-    // F = F0 + (1 - F0) * (1 - cos(theta))^5
-    float fresnel = pow(dist, 3.0);
-    
-    // Apply edge mask to limit to actual edges
-    float edgeMask = getEdgeMask(uv, edgeThickness);
-    
-    return fresnel * edgeMask * fresnelStrength;
-}
-
-// ============================================================================
-// SPECULAR HIGHLIGHTS - Sharp light reflections
-// ============================================================================
-
-float specularHighlight(vec2 uv) {
-    // Simulate light coming from top-left
-    vec2 lightDir = normalize(vec2(-0.7, -0.7));
-    vec2 center = vec2(0.5);
-    vec2 pos = uv - center;
-    
-    // Dot product with light direction
-    float highlight = dot(normalize(pos + 0.0001), lightDir);
-    
-    // Sharp falloff for specular look
-    highlight = pow(max(highlight, 0.0), 16.0);
-    
-    // Only show on edges
-    float edgeMask = getEdgeMask(uv, edgeThickness * 0.5);
-    
-    // Add secondary highlight from bottom-right for depth
-    vec2 lightDir2 = normalize(vec2(0.7, 0.7));
-    float highlight2 = dot(normalize(pos + 0.0001), lightDir2);
-    highlight2 = pow(max(highlight2, 0.0), 24.0) * 0.5;
-    
-    return (highlight + highlight2) * edgeMask * specularStrength;
-}
-
-// ============================================================================
-// MAIN SHADER
+// MAIN
 // ============================================================================
 
 void main() {
     vec2 uv = v_texcoord;
-    vec2 texelSize = 1.0 / fullSize;
     
-    // Get rounded corner alpha - discard pixels outside rounded rect
-    float cornerAlpha = getRoundedAlpha(uv);
+    // Get window shape alpha for smooth edges
+    float shapeDist = getShapeDistance(uv);
+    float cornerAlpha = 1.0 - smoothstep(-AA_EDGE, AA_EDGE, shapeDist);
+    
     if (cornerAlpha < 0.001) {
         discard;
     }
     
-    // Calculate edge distance and masks
-    float edgeDist = getEdgeDistance(uv);
-    float edgeMask = getEdgeMask(uv, edgeThickness);
+    // Apply liquid glass effect (refraction + blur sampling)
+    vec4 color = LiquidGlass(uv);
     
-    // Define border zone width (in UV space)
-    float borderWidth = edgeThickness * 1.5;
+    // ========================================================================
+    // EDGE LIGHTING BORDERS (applied AFTER blur, as overlay)
+    // Creates the 3D beveled glass appearance like Apple's design
+    // ========================================================================
     
-    // Smooth border blend factor - no hard edges
-    // Gradually transitions from interior (0) to full border effect (1) to edge
-    float borderBlend = smoothstep(-borderWidth * 1.5, -borderWidth * 0.3, edgeDist) 
-                      * (1.0 - smoothstep(-borderWidth * 0.1, 0.0, edgeDist));
+    // Distance from edge (positive inside)
+    float edgeDist = -shapeDist;
     
-    // ========================================
-    // 1. LIQUID REFRACTION - Visible warping
-    // ========================================
-    // Get border refraction for 3D depth at edges
-    vec2 borderRefract = getBorderRefraction(uv, borderWidth);
-    vec2 refractedUV = clamp(uv + borderRefract, 0.001, 0.999);
+    // Edge border width in UV space (thinner for sharper highlight)
+    float borderWidth = 0.025;
+    float innerBorderWidth = 0.06;
     
-    // ========================================
-    // 2. CHROMATIC DISPERSION - Color separation
-    // ========================================
+    // Create edge mask - only affects the border region
+    float edgeMask = smoothstep(innerBorderWidth, borderWidth * 0.5, edgeDist);
+    
+    // Get edge normal for directional lighting
     vec2 edgeNormal = getEdgeNormal(uv);
-    float chromaStrength = length(borderRefract) * chromaticAberration * 2.0;
     
-    float r = texture(tex, clamp(refractedUV - edgeNormal * chromaStrength * 0.8, 0.0, 1.0)).r;
-    float g = texture(tex, clamp(refractedUV, 0.0, 1.0)).g;
-    float b = texture(tex, clamp(refractedUV + edgeNormal * chromaStrength * 1.2, 0.0, 1.0)).b;
+    // Light direction (top-left, like Apple's design)
+    vec2 lightDir = normalize(vec2(-0.7, -0.7));
     
-    vec3 refractedColor = vec3(r, g, b);
+    // Highlight: where normal faces the light (top-left edges)
+    float highlight = max(dot(edgeNormal, -lightDir), 0.0);
+    highlight = pow(highlight, 1.5); // Slightly sharpen
     
-    // ========================================
-    // 3. BLUR - Frosted glass effect
-    // ========================================
-    vec3 blurredColor = fastBlur(refractedUV, texelSize, blurStrength);
+    // Shadow: where normal faces away from light (bottom-right edges)  
+    float shadow = max(dot(edgeNormal, lightDir), 0.0);
+    shadow = pow(shadow, 2.0); // Softer shadow
     
-    // Mix refracted and blurred
-    vec3 glassColor = mix(blurredColor, refractedColor, 0.4);
+    // Inner glow falloff (softer transition into the glass)
+    float innerGlow = smoothstep(innerBorderWidth * 1.5, borderWidth, edgeDist);
     
-    // ========================================
-    // 4. SUBTLE EDGE DEPTH
-    // ========================================
-    // Smooth depth variation based on edge proximity
-    float depthFactor = smoothstep(-borderWidth, 0.0, edgeDist);
+    // Combine highlight and shadow with edge mask
+    // Highlight is additive (brightens), shadow is subtractive (darkens slightly)
+    float highlightStrength = 0.65;  // Bright edge intensity
+    float shadowStrength = 0.15;     // Subtle darkening
     
-    // Very subtle brightness variation (no hard lines)
-    float depthBrightness = mix(0.98, 1.02, depthFactor);
-    glassColor *= depthBrightness;
+    // Apply as overlay - this doesn't affect blur, just adds lighting on top
+    vec3 borderLight = vec3(highlight * highlightStrength * edgeMask);
+    vec3 borderShadow = vec3(shadow * shadowStrength * edgeMask);
     
-    // ========================================
-    // 7. FINAL ADJUSTMENTS
-    // ========================================
-    // Slight cool tint for glass
-    vec3 glassTint = vec3(0.99, 0.995, 1.0);
-    vec3 finalColor = glassColor * glassTint;
+    // Add secondary inner highlight for depth (subtle)
+    float innerHighlight = highlight * innerGlow * 0.2;
     
-    // Clamp to valid range
-    finalColor = clamp(finalColor, 0.0, 1.0);
-     
-    fragColor = vec4(finalColor, glassOpacity * cornerAlpha);
+    // Final color with edge lighting overlay
+    color.rgb = color.rgb + borderLight + vec3(innerHighlight) - borderShadow;
+    
+    // Apply opacity and corner smoothing
+    color.a = glassOpacity * cornerAlpha;
+    
+    // Clamp final color
+    color.rgb = clamp(color.rgb, 0.0, 1.0);
+    
+    fragColor = color;
 }

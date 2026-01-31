@@ -170,23 +170,23 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // Register configuration values with Apple-tuned defaults
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:enabled", Hyprlang::INT{1});
     
-    // Blur: Apple uses moderate blur - enough to obscure but not smear
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:blur_strength", Hyprlang::FLOAT{2.0});
+    // Blur: stronger by default for cleaner frosted glass
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:blur_strength", Hyprlang::FLOAT{4.0});
     
-    // Refraction: Apple is very subtle with edge distortion
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:refraction_strength", Hyprlang::FLOAT{0.04});
+    // Refraction: subtle edge distortion
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:refraction_strength", Hyprlang::FLOAT{0.03});
     
-    // Chromatic aberration: Apple keeps this minimal
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:chromatic_aberration", Hyprlang::FLOAT{0.006});
+    // Chromatic aberration: minimal, only visible at edges
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:chromatic_aberration", Hyprlang::FLOAT{0.008});
     
-    // Fresnel: Key to Apple look - strong luminous edge glow
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:fresnel_strength", Hyprlang::FLOAT{0.7});
+    // Fresnel: subtle edge brightening (avoid fake white border)
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:fresnel_strength", Hyprlang::FLOAT{0.2});
     
-    // Specular: Subtle highlight, not too shiny
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:specular_strength", Hyprlang::FLOAT{0.15});
+    // Specular: very subtle to keep borders natural
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:specular_strength", Hyprlang::FLOAT{0.08});
     
-    // Glass opacity: Slightly translucent for depth
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:glass_opacity", Hyprlang::FLOAT{0.92});
+    // Glass opacity: More opaque for solid glass appearance
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:glass_opacity", Hyprlang::FLOAT{0.96});
     
     // Edge thickness: Thin crisp edges like Apple
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:liquid-glass:edge_thickness", Hyprlang::FLOAT{0.10});
