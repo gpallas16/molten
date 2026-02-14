@@ -101,9 +101,10 @@ Item {
     readonly property string configDir: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/molten"
     readonly property string configPath: configDir + "/launcher.json"
 
+    // Adaptive colors (shares notch region sampling)
     AdaptiveColors {
         id: adaptiveColors
-        region: "notch"
+        regionId: "notch"
     }
 
     // File IO for persistence - use Process for reliable reading
@@ -121,16 +122,6 @@ Item {
         }
     }
     
-    // Ensure config loads after component is ready
-    Timer {
-        id: loadTimer
-        interval: 50
-        running: true
-        onTriggered: {
-            readConfigProcess.running = true
-        }
-    }
-
     Connections {
         target: AppSearch
         function onAppsReady() {
@@ -142,6 +133,7 @@ Item {
     Component.onCompleted: {
         updateContent()
         searchInput.forceActiveFocus()
+        readConfigProcess.running = true
     }
 
     // ============ PERSISTENCE ============

@@ -29,10 +29,10 @@ Item {
         })
     }
 
-    // Adaptive colors
+    // Adaptive colors (shares notch region sampling)
     AdaptiveColors {
         id: adaptiveColors
-        region: "notch"
+        regionId: "notch"
     }
 
     // Keyboard navigation

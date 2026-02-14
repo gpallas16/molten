@@ -13,10 +13,10 @@ Item {
 
     signal closeRequested()
 
-    // Adaptive colors based on background
+    // Adaptive colors based on background (shares notch region sampling)
     AdaptiveColors {
         id: adaptiveColors
-        region: "notch"
+        regionId: "notch"
     }
 
     // Helper functions for toggle states

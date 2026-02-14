@@ -1,0 +1,4 @@
+module Molten.Components.Popups
+ToolbarPopup 1.0 ToolbarPopup.qml
+LivePopup 1.0 LivePopup.qml
+AppPopup 1.0 AppPopup.qml

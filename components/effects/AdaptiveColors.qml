@@ -1,24 +1,41 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 
-// Reads adaptive color data from the liquid glass plugin
-// The plugin calculates background luminance and writes to a JSON file
+/**
+ * AdaptiveColors - Dynamic screen sampling for adaptive text colors
+ * 
+ * Registers with the adaptive_colors.py service by writing to a shared
+ * regions file. The service captures screen content and writes results
+ * to an output file which this component watches.
+ * 
+ * Usage:
+ *   AdaptiveColors {
+ *       id: adaptiveColors
+ *       regionId: "myElement"
+ *       sampleX: 100
+ *       sampleY: 900  
+ *       sampleWidth: 400
+ *       sampleHeight: 60
+ *   }
+ */
 Item {
     id: root
     
-    // Whether this component is active (disable in fullscreen)
-    property bool active: true
+    // Region identifier (for multiple samplers)
+    property string regionId: "default"
     
-    // Which region this component represents (left, right, notch)
-    property string region: "notch"
+    // Sample region coordinates (screen-absolute)
+    property int sampleX: 0
+    property int sampleY: 0
+    property int sampleWidth: 400
+    property int sampleHeight: 60
+    
+    // Whether this component is active
+    property bool active: true
     
     // Output: whether the background is dark (content should be light)
     property bool backgroundIsDark: true
-    
-    // Internal: debouncing state changes
-    property bool pendingDarkState: true
-    property int stableStateCount: 0
-    readonly property int requiredStableFrames: 3  // Require 3 consistent readings
     
     // Output: adaptive colors based on background
     property color textColor: backgroundIsDark ? "#ffffff" : "#000000"
@@ -32,47 +49,103 @@ Item {
     Behavior on iconColor { ColorAnimation { duration: 200 } }
     Behavior on subtleTextColor { ColorAnimation { duration: 200 } }
     
-    // File watcher for adaptive color data (written by liquid glass plugin)
+    // Debouncing for stability
+    property bool _pendingDark: true
+    property int _stableCount: 0
+    readonly property int _requiredStable: 2
+    
+    // File paths
+    readonly property string regionsFile: "/tmp/molten-adaptive-regions.json"
+    readonly property string resultsFile: "/tmp/molten-adaptive-colors.json"
+    
+    // Register this region with the service
+    Process {
+        id: registerProcess
+        command: ["python3", "-c",
+            "import json,os;" +
+            "f='" + root.regionsFile + "';" +
+            "d=json.load(open(f)) if os.path.exists(f) else {};" +
+            "d['" + root.regionId + "']={'x':" + root.sampleX + ",'y':" + root.sampleY + ",'w':" + root.sampleWidth + ",'h':" + root.sampleHeight + "};" +
+            "open(f,'w').write(json.dumps(d))"
+        ]
+    }
+    
+    // Unregister when destroyed
+    Process {
+        id: unregisterProcess
+        command: ["python3", "-c",
+            "import json,os;" +
+            "f='" + root.regionsFile + "';" +
+            "d=json.load(open(f)) if os.path.exists(f) else {};" +
+            "d.pop('" + root.regionId + "',None);" +
+            "open(f,'w').write(json.dumps(d))"
+        ]
+    }
+    
+    // Watch results file for updates from service
     FileView {
-        id: colorDataFile
-        path: "/tmp/molten-adaptive-colors.json"
+        id: resultsWatcher
+        path: root.resultsFile
         watchChanges: root.active
         
-        onFileChanged: if (root.active) reload()
+        onFileChanged: reload()
         
         onLoaded: {
             if (!root.active) return
             try {
                 var data = JSON.parse(text())
-                if (data[root.region]) {
-                    var isDark = data[root.region].isDark
+                var regionData = data[root.regionId]
+                if (regionData && regionData.isDark !== undefined) {
+                    var isDark = regionData.isDark
                     
-                    // Debounce: only change if state is stable for multiple readings
-                    if (isDark === root.pendingDarkState) {
-                        root.stableStateCount++
-                        if (root.stableStateCount >= root.requiredStableFrames && 
+                    // Debounce state changes
+                    if (isDark === root._pendingDark) {
+                        root._stableCount++
+                        if (root._stableCount >= root._requiredStable && 
                             root.backgroundIsDark !== isDark) {
                             root.backgroundIsDark = isDark
                         }
                     } else {
-                        // State changed, reset counter
-                        root.pendingDarkState = isDark
-                        root.stableStateCount = 0
+                        root._pendingDark = isDark
+                        root._stableCount = 0
                     }
                 }
             } catch (e) {
-                // File not ready or parse error
+                // Parse error - ignore
             }
         }
     }
     
-    // Also poll periodically as backup (only when active)
-    Timer {
-        interval: 100
-        running: root.active
-        repeat: true
-        onTriggered: colorDataFile.reload()
+    // Register when region changes
+    onSampleXChanged: if (active) registerRegion()
+    onSampleYChanged: if (active) registerRegion()
+    onSampleWidthChanged: if (active) registerRegion()
+    onSampleHeightChanged: if (active) registerRegion()
+    onActiveChanged: {
+        if (active) registerRegion()
+        else unregisterRegion()
     }
     
-    Component.onCompleted: if (active) colorDataFile.reload()
+    function registerRegion() {
+        if (sampleWidth > 0 && sampleHeight > 0 && !registerProcess.running) {
+            registerProcess.running = true
+        }
+    }
+    
+    function unregisterRegion() {
+        unregisterProcess.running = true
+    }
+    
+    // Initial registration
+    Component.onCompleted: {
+        if (active && sampleWidth > 0 && sampleHeight > 0) {
+            registerRegion()
+        }
+    }
+    
+    // Cleanup on destruction
+    Component.onDestruction: {
+        unregisterRegion()
+    }
 }
+

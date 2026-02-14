@@ -9,7 +9,6 @@ import "../../globals"
 import "../../services"
 import "../../services/notification_utils.js" as NotificationUtils
 import ".."
-import "../effects"
 import "../behavior"
 import "../transforms"
 import "../widgets"
@@ -17,19 +16,19 @@ import "../widgets"
 /**
  * MainBar - Dynamic Island style notch bar
  * 
- * Uses GlassBackdrop which manages both blur window and content area.
+ * Pure panel UI - content rendered directly in the panel window.
  */
 Item {
     id: notchContainer
 
-    // Size from GlassBackdrop
-    implicitWidth: glassBackdrop.implicitWidth
-    implicitHeight: glassBackdrop.implicitHeight
+    // Size from panel backdrop
+    implicitWidth: panelBackdrop.implicitWidth
+    implicitHeight: panelBackdrop.implicitHeight
     width: implicitWidth
     height: implicitHeight
     
     /** Current margin from screen edge */
-    readonly property real barMargin: glassBackdrop.margin
+    readonly property real barMargin: 6
     
     /** Screen dimensions - must be set by parent */
     property int screenWidth: 1920
@@ -74,14 +73,14 @@ Item {
         debugName: "MainBar"
         mode: notchContainer.mode
         barHovered: notchContainer._realHover
-        popupActive: notchContainer.notificationPopupActive || notchContainer.volumeOverlayActive || notchContainer.brightnessOverlayActive || notchContainer.trayMenuActive
+        popupActive: notchContainer.notificationPopupActive || notchContainer.volumeOverlayActive || notchContainer.brightnessOverlayActive || notchContainer.trayMenuActive || notchContainer.toolbarPopupActive || notchContainer.livePopupActive || notchContainer.appPopupActive
         isExpanded: notchContainer.isExpanded
         hasActiveWindows: notchContainer.hasActiveWindows
         hideDelay: 1000
     }
     
-    // Computed from behavior
-    readonly property bool compactMode: behavior.isCompact
+    // Computed from behavior - toolbar popup forces normal mode
+    readonly property bool compactMode: (toolbarPopupActive || livePopupActive || appPopupActive) ? false : behavior.isCompact
     readonly property bool showBar: behavior.barVisible
     readonly property string internalState: behavior.internalState
 
@@ -196,6 +195,29 @@ Item {
     * @param {string} viewName - One of: "launcher", "live", "toolbar", "power", "clipboard"
      */
     function openView(viewName) {
+        // Popup views - toggle independently, close others
+        if (viewName === "toolbar" || viewName === "live" || viewName === "launcher") {
+            var wasActive = (viewName === "toolbar" && toolbarPopupActive) ||
+                            (viewName === "live" && livePopupActive) ||
+                            (viewName === "launcher" && appPopupActive)
+            // Close all popups first
+            toolbarPopupActive = false
+            livePopupActive = false
+            appPopupActive = false
+            // Toggle the requested one
+            if (!wasActive) {
+                if (viewName === "toolbar") toolbarPopupActive = true
+                else if (viewName === "live") livePopupActive = true
+                else if (viewName === "launcher") appPopupActive = true
+            }
+            return
+        }
+        
+        // Close all popups if opening a stacked screen
+        toolbarPopupActive = false
+        livePopupActive = false
+        appPopupActive = false
+        
         if (currentView === viewName) return
         if (!screenViews[viewName]) return
 
@@ -213,11 +235,23 @@ Item {
      * Close expanded view and return to default collapsed state
      */
     function closeView() {
+        // Close all popups
+        toolbarPopupActive = false
+        livePopupActive = false
+        appPopupActive = false
+        
         if (currentView === "default") return
         stackViewInternal.pop()
         currentView = "default"
         closeRequested()
     }
+    
+    /** Whether toolbar popup is active (shows above bar, not inside) */
+    property bool toolbarPopupActive: false
+    /** Whether live popup is active */
+    property bool livePopupActive: false
+    /** Whether app launcher popup is active */
+    property bool appPopupActive: false
     
     // ═══════════════════════════════════════════════════════════════
     // NOTIFICATION HELPERS - Internal methods for popup widget
@@ -289,7 +323,7 @@ Item {
         discreteMode: notchContainer.discreteMode
         expanded: screenNotchOpen
         showBar: notchContainer.showBar
-        contentWidth: 0  // Not used - GlassBackdrop sizes from content
+        contentWidth: 0  // Not used - panel sizes from content
         contentHeight: 0
         animDuration: notchContainer.animDuration
         
@@ -381,57 +415,89 @@ Item {
     readonly property int notificationPopupMaxHeight: 400
     
     // ═══════════════════════════════════════════════════════════════
-    // ADAPTIVE COLORS - Based on wallpaper/background
+    // ADAPTIVE COLORS - Based on screen content behind bar
     // ═══════════════════════════════════════════════════════════════
     
     /**
      * AdaptiveColors - Provides colors that adapt to background
      * 
-     * Samples the wallpaper in the "notch" region to provide
+     * Samples the screen region behind the bar to provide
      * readable text colors regardless of background.
      */
     AdaptiveColors {
         id: adaptiveColors
-        region: "notch"
+        regionId: "notch"
         active: notchContainer.active
+        // Sample the screen area where the bar sits (center-bottom)
+        sampleX: Math.round((notchContainer.screenWidth - panelBackdrop.width) / 2)
+        sampleY: notchContainer.screenHeight - Math.round(panelBackdrop.height) - barMargin
+        sampleWidth: Math.round(panelBackdrop.width)
+        sampleHeight: Math.round(panelBackdrop.height)
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // GLASS BACKDROP - Unified blur window + content container
+    // PANEL BACKDROP - Pure panel UI container
     // ═══════════════════════════════════════════════════════════════
     
     /**
-     * GlassBackdrop - Single component managing both:
-     * - FloatingWindow for Hyprland blur effect
-     * - Content area for bar UI
+     * PanelBackdrop - Direct panel content container
      * 
-     * Both share the same size/radius - zero sync needed.
+     * Visual container with rounded corners, adaptive background, and blur effect.
      */
-    GlassBackdrop {
-        id: glassBackdrop
-        backdropName: "notch"
-        horizontalAlign: "center"
-        margin: 6
-        startupDelay: 150
+    Rectangle {
+        id: panelBackdrop
         
-        // Radius from transform
+        // Content padding - less in discrete mode
+        property int contentPadding: discreteMode ? 2 : (screenNotchOpen ? 16 : 12)
+        
+        // Animated values
+        property real _animPadding: contentPadding
+        
+        Behavior on _animPadding {
+            NumberAnimation { duration: animDuration; easing.type: Easing.OutQuart }
+        }
+        
+        // Size from content + padding
+        implicitWidth: stackContainer.implicitWidth + _animPadding * 2
+        implicitHeight: stackContainer.implicitHeight + _animPadding * 2
+        width: implicitWidth
+        height: implicitHeight
+        
+        // Styling - semi-transparent for blur effect
         radius: barTransform.barRadius
+        color: adaptiveColors.backgroundIsDark ? 
+               Qt.rgba(0, 0, 0, 0.5) : 
+               Qt.rgba(1, 1, 1, 0.5)
+        border.width: 1
+        border.color: adaptiveColors.backgroundIsDark ?
+                      Qt.rgba(1, 1, 1, 0.15) :
+                      Qt.rgba(0, 0, 0, 0.15)
         
-        // Padding for content - less in discrete mode
-        contentPadding: discreteMode ? 2 : (screenNotchOpen ? 16 : 12)
+        // Y offset for slide animation
+        y: barTransform.slideY
         
-        // Animation
-        animationDuration: animDuration
+        Behavior on color {
+            ColorAnimation { duration: 200 }
+        }
         
-        // Visibility
-        backdropVisible: notchContainer.active
+        Behavior on radius {
+            NumberAnimation { duration: animDuration; easing.type: Easing.OutQuart }
+        }
         
-        // Slide animation
-        yOffset: barTransform.slideY
+        Behavior on y {
+            NumberAnimation { duration: animDuration; easing.type: Easing.OutQuart }
+        }
         
-        // Screen dimensions from parent
-        screenWidth: notchContainer.screenWidth
-        screenHeight: notchContainer.screenHeight
+        // Content item alias for external access
+        property alias contentItem: contentArea
+        
+        Item {
+            id: contentArea
+            x: panelBackdrop._animPadding
+            y: panelBackdrop._animPadding
+            width: parent.width - panelBackdrop._animPadding * 2
+            height: parent.height - panelBackdrop._animPadding * 2
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -440,13 +506,13 @@ Item {
 
     /**
      * Stack Container - Holds the StackView with content
-     * Lives inside GlassBackdrop's contentItem
+     * Lives inside panelBackdrop's contentItem
      */
     Item {
         id: stackContainer
-        parent: glassBackdrop.contentItem
+        parent: panelBackdrop.contentItem
         
-        // Size from content - this drives GlassBackdrop's size
+        // Size from content - this drives panelBackdrop's size
         implicitWidth: stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitWidth : 100
         implicitHeight: stackViewInternal.currentItem ? stackViewInternal.currentItem.implicitHeight : 36
         width: implicitWidth
@@ -594,7 +660,7 @@ Item {
                 // Fill parent width so center anchor works against bar width
                 anchors.fill: parent
                 
-                // Use actual cluster widths - GlassBackdrop handles the animation smoothly
+                // Use actual cluster widths - panelBackdrop handles the animation smoothly
                 implicitWidth: Math.max(
                     leftCluster.implicitWidth + centerCluster.implicitWidth + rightCluster.implicitWidth + (discreteMode ? 16 : 40),
                     centerCluster.implicitWidth + 2 * Math.max(leftCluster.implicitWidth, rightCluster.implicitWidth) + (discreteMode ? 16 : 40)
@@ -688,7 +754,7 @@ Item {
                     implicitWidth: targetWidth
                     implicitHeight: targetHeight
                     
-                    // Size changes instantly - GlassBackdrop animates the container
+                    // Size changes instantly - panelBackdrop animates the container
                     width: targetWidth
                     height: targetHeight
 
@@ -877,12 +943,22 @@ Item {
                         opacity: discreteMode ? 0 : 1
                         clip: true
                         
-                        Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
+                        Behavior on opacity { NumberAnimation { duration: animDuration / 6 } }
+                        
+                        // Animate icons up and fade when toolbar is active
+                        property real toolbarAnimProgress: toolbarPopupActive ? 1 : 0
+                        Behavior on toolbarAnimProgress { NumberAnimation { duration: State.animDuration ?? 300 } }
+                        
+                        transform: Translate {
+                            y: parent.toolbarAnimProgress ? -24 * parent.toolbarAnimProgress : 0
+                        }
                         
                         RowLayout {
                             id: statusLayout
                             anchors.centerIn: parent
                             spacing: 6
+                            opacity: 1 - parent.toolbarAnimProgress
+                            Behavior on opacity { NumberAnimation { duration: animDuration / 4 } }
 
                             // Volume
                             Item {
@@ -905,6 +981,7 @@ Item {
                                         else Audio.decrementVolume()
                                         notchContainer.showVolumeOverlay()
                                     }
+                                    enabled: parent.parent.opacity > 0.1
                                 }
                             }
 
@@ -950,7 +1027,12 @@ Item {
                         opacity: discreteMode ? 1 : 0
                         visible: discreteMode
                         
-                        Behavior on opacity { NumberAnimation { duration: animDuration / 2 } }
+                        // Toolbar animation state
+                        property real toolbarAnimProgress: toolbarPopupActive ? 1 : 0
+                        Behavior on toolbarAnimProgress { NumberAnimation { duration: State.animDuration ?? 300 } }
+                        
+                        // Animate icons up and fade
+                        transform: Translate { y: parent.toolbarAnimProgress ? -24 * parent.toolbarAnimProgress : 0 }
                         
                         // Volume
                         Text {
@@ -958,11 +1040,13 @@ Item {
                             font.family: Icons.font
                             font.pixelSize: 14
                             color: adaptiveColors.iconColor
+                            opacity: 1 - parent.toolbarAnimProgress
+                            Behavior on opacity { NumberAnimation { duration: animDuration / 4 } }
                             
                             MouseArea {
                                 anchors.fill: parent
                                 anchors.margins: -4
-                                enabled: discreteMode
+                                enabled: discreteMode && !toolbarPopupActive
                                 onClicked: {
                                     Audio.toggleMute()
                                     notchContainer.showVolumeOverlay()
@@ -981,6 +1065,8 @@ Item {
                             font.family: Icons.font
                             font.pixelSize: 14
                             color: adaptiveColors.iconColor
+                            opacity: 1 - parent.toolbarAnimProgress
+                            Behavior on opacity { NumberAnimation { duration: animDuration / 4 } }
                         }
                         
                         // Bluetooth (only if enabled)
@@ -990,6 +1076,8 @@ Item {
                             font.family: Icons.font
                             font.pixelSize: 14
                             color: adaptiveColors.iconColor
+                            opacity: 1 - parent.toolbarAnimProgress
+                            Behavior on opacity { NumberAnimation { duration: animDuration / 4 } }
                         }
                     }
 
@@ -1030,8 +1118,6 @@ Item {
 
     /** Screen view mapping - Maps view names to QML file paths */
     readonly property var screenViews: ({
-        "launcher": "../../screens/AppLauncher.qml",
-        "live": "../../screens/LiveScreen.qml",
         "toolbar": "../../screens/ToolbarScreen.qml",
         "power": "../../screens/PowerScreen.qml",
         "clipboard": "../../screens/ClipboardScreen.qml"

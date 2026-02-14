@@ -94,25 +94,6 @@ float Glow(vec2 uv) {
     return sin(atan(uv.y * 2.0 - 1.0, uv.x * 2.0 - 1.0) - 0.5);
 }
 
-// Get edge normal (gradient of SDF) for lighting calculations
-vec2 getEdgeNormal(vec2 uv) {
-    vec2 center = vec2(0.5);
-    vec2 p = (uv - center) * 2.0;
-    float aspectRatio = fullSize.x / fullSize.y;
-    vec2 scaledP = p * vec2(aspectRatio, 1.0);
-    vec2 halfSize = vec2(aspectRatio, 1.0);
-    float uvRadius = (radius / fullSize.y) * 2.0;
-    
-    // Compute gradient via finite differences
-    float eps = 0.002;
-    float d = roundedBoxSDF(scaledP, halfSize, uvRadius);
-    float dx = roundedBoxSDF(scaledP + vec2(eps, 0.0), halfSize, uvRadius) - d;
-    float dy = roundedBoxSDF(scaledP + vec2(0.0, eps), halfSize, uvRadius) - d;
-    
-    vec2 normal = normalize(vec2(dx, dy) + 0.0001);
-    return normal;
-}
-
 // ============================================================================
 // SHAPE DISTANCE CALCULATION
 // Adapts to window shape using rounded rectangle SDF
@@ -220,53 +201,6 @@ void main() {
     
     // Apply liquid glass effect (refraction + blur sampling)
     vec4 color = LiquidGlass(uv);
-    
-    // ========================================================================
-    // EDGE LIGHTING BORDERS (applied AFTER blur, as overlay)
-    // Creates the 3D beveled glass appearance like Apple's design
-    // ========================================================================
-    
-    // Distance from edge (positive inside)
-    float edgeDist = -shapeDist;
-    
-    // Edge border width in UV space (thinner for sharper highlight)
-    float borderWidth = 0.025;
-    float innerBorderWidth = 0.06;
-    
-    // Create edge mask - only affects the border region
-    float edgeMask = smoothstep(innerBorderWidth, borderWidth * 0.5, edgeDist);
-    
-    // Get edge normal for directional lighting
-    vec2 edgeNormal = getEdgeNormal(uv);
-    
-    // Light direction (top-left, like Apple's design)
-    vec2 lightDir = normalize(vec2(-0.7, -0.7));
-    
-    // Highlight: where normal faces the light (top-left edges)
-    float highlight = max(dot(edgeNormal, -lightDir), 0.0);
-    highlight = pow(highlight, 1.5); // Slightly sharpen
-    
-    // Shadow: where normal faces away from light (bottom-right edges)  
-    float shadow = max(dot(edgeNormal, lightDir), 0.0);
-    shadow = pow(shadow, 2.0); // Softer shadow
-    
-    // Inner glow falloff (softer transition into the glass)
-    float innerGlow = smoothstep(innerBorderWidth * 1.5, borderWidth, edgeDist);
-    
-    // Combine highlight and shadow with edge mask
-    // Highlight is additive (brightens), shadow is subtractive (darkens slightly)
-    float highlightStrength = 0.65;  // Bright edge intensity
-    float shadowStrength = 0.15;     // Subtle darkening
-    
-    // Apply as overlay - this doesn't affect blur, just adds lighting on top
-    vec3 borderLight = vec3(highlight * highlightStrength * edgeMask);
-    vec3 borderShadow = vec3(shadow * shadowStrength * edgeMask);
-    
-    // Add secondary inner highlight for depth (subtle)
-    float innerHighlight = highlight * innerGlow * 0.2;
-    
-    // Final color with edge lighting overlay
-    color.rgb = color.rgb + borderLight + vec3(innerHighlight) - borderShadow;
     
     // Apply opacity and corner smoothing
     color.a = glassOpacity * cornerAlpha;

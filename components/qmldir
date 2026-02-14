@@ -9,7 +9,6 @@ SizeAnimator 1.0 transforms/SizeAnimator.qml
 StackTransitions 1.0 transforms/StackTransitions.qml
 FadeAnimator 1.0 transforms/FadeAnimator.qml
 AdaptiveColors 1.0 effects/AdaptiveColors.qml
-GlassBackdrop 1.0 effects/GlassBackdrop.qml
 WorkspacesWidget 1.0 widgets/WorkspacesWidget.qml
 NotificationPopupWidget 1.0 widgets/NotificationPopupWidget.qml
 VolumeOverlayWidget 1.0 widgets/VolumeOverlayWidget.qml

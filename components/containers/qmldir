@@ -1,0 +1,5 @@
+module Molten.Components.Containers
+BlurContainer 1.0 BlurContainer.qml
+BubbleContainer 1.0 BubbleContainer.qml
+BubbleField 1.0 BubbleField.qml
+Bubble 1.0 Bubble.qml

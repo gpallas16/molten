@@ -7,6 +7,7 @@ import Quickshell.Io
 import Quickshell.Services.Mpris
 import QtQuick
 import "components"
+import "components/popups"
 import "config"
 import "globals" as Root
 import "globals"
@@ -17,6 +18,28 @@ ShellRoot {
 
     // Current screen state (synced with main bar)
     property string currentScreen: "none"
+    
+    // ═══════════════════════════════════════════════════════════════
+    // ADAPTIVE COLORS SERVICE - Screen sampling for dynamic colors
+    // ═══════════════════════════════════════════════════════════════
+    Process {
+        id: adaptiveColorsService
+        command: [Quickshell.workingDirectory + "/scripts/adaptive_colors.py"]
+        running: true
+        
+        onRunningChanged: {
+            if (!running) {
+                // Restart if it crashes
+                restartTimer.start()
+            }
+        }
+    }
+    
+    Timer {
+        id: restartTimer
+        interval: 1000
+        onTriggered: adaptiveColorsService.running = true
+    }
     
     // ═══════════════════════════════════════════════════════════════
     // WALLPAPER - Native wallpaper rendering (one per screen)
@@ -187,34 +210,6 @@ ShellRoot {
         return toplevel.fullscreen
     }
 
-        // ═══════════════════════════════════════════════════════════════
-    // DUMMY GLASS WINDOW - Absorbs first-render bug
-    // ═══════════════════════════════════════════════════════════════
-    FloatingWindow {
-        id: dummyGlassWindow
-        visible: !root.isFullscreen
-        title: "molten-glass-dummy"
-        
-        implicitWidth: 1
-        implicitHeight: 1
-        
-        color: "transparent"
-        
-        property bool windowReady: false
-        
-        Timer {
-            interval: 10
-            running: dummyGlassWindow.visible
-            onTriggered: {
-                dummyGlassWindow.windowReady = true
-                Hyprland.dispatch("resizewindowpixel exact 1 1,title:^molten-glass-dummy$")
-                Hyprland.dispatch("movewindowpixel exact -10 -10,title:^molten-glass-dummy$")
-            }
-        }
-        
-        Rectangle { width: 1; height: 1; color: "transparent" }
-    }
-    
     // ═══════════════════════════════════════════════════════════════
     // EXCLUSIVE ZONE - Invisible bar to reserve screen space
     // Visible for all modes except "hidden"
@@ -299,13 +294,17 @@ ShellRoot {
 
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "molten-notch"
-        WlrLayershell.keyboardFocus: mainBarContent.isExpanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+
+        // Any popup active helper
+        readonly property bool anyPopupActive: mainBarContent.toolbarPopupActive || mainBarContent.livePopupActive || mainBarContent.appPopupActive
+
+        WlrLayershell.keyboardFocus: (mainBarContent.isExpanded || anyPopupActive) ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         // Note: Can't use exclusiveZone here - window is full-screen for click handling
         // Side bars handle the exclusive zone reservation
 
-        // Mask: full window when expanded, full-width bottom zone otherwise
+        // Mask: full window when expanded or popup active, full-width bottom zone otherwise
         mask: Region {
-            item: mainBarContent.isExpanded ? fullWindowMask : bottomHoverMask
+            item: (mainBarContent.isExpanded || mainBarWindow.anyPopupActive) ? fullWindowMask : bottomHoverMask
         }
 
         // Full window mask for catching outside clicks when expanded
@@ -327,7 +326,7 @@ ShellRoot {
         MouseArea {
             anchors.fill: parent
             z: -1
-            visible: mainBarContent.isExpanded
+            visible: mainBarContent.isExpanded || mainBarWindow.anyPopupActive
             onClicked: mainBarContent.closeView()
         }
 
@@ -368,7 +367,7 @@ ShellRoot {
                 anchors.centerIn: parent
                 parentWindow: mainBarWindow
                 
-                // Screen dimensions for GlassBackdrop positioning
+                // Screen dimensions for positioning
                 screenWidth: mainBarWindow.width
                 screenHeight: mainBarWindow.height
                 
@@ -391,6 +390,57 @@ ShellRoot {
                 onBarHoverChanged: (hovering) => {
                     // No longer needed - using externalHover instead
                 }
+            }
+            
+            // Toolbar Popup - Floats above the bar, expands from right
+            ToolbarPopup {
+                id: toolbarPopup
+                
+                // Position above bar, aligned to right side with larger margin
+                anchors.bottom: mainBarContent.top
+                anchors.bottomMargin: 6
+                anchors.right: mainBarContent.right
+                
+                // Screen position for adaptive colors
+                screenX: Math.round((mainBarWindow.width - toolbarPopup.width) / 2 + (mainBarContent.width / 2 - toolbarPopup.width / 2))
+                screenY: Math.round(mainBarWindow.height - mainBarContent.height - 48 - toolbarPopup.height)
+                
+                // Show when toolbar is activated
+                show: mainBarContent.toolbarPopupActive
+                
+                onCloseRequested: mainBarContent.closeView()
+            }
+
+            // Live Popup - Floats above the bar, expands from left
+            LivePopup {
+                id: livePopup
+
+                anchors.bottom: mainBarContent.top
+                anchors.bottomMargin: 6
+                anchors.left: mainBarContent.left
+
+                screenX: Math.round(mainBarRegionContainer.x + mainBarContent.x)
+                screenY: Math.round(mainBarWindow.height - mainBarContent.height - 48 - livePopup.height)
+
+                show: mainBarContent.livePopupActive
+
+                onCloseRequested: mainBarContent.closeView()
+            }
+
+            // App Launcher Popup - Floats above the bar, expands from center
+            AppPopup {
+                id: appPopup
+
+                anchors.bottom: mainBarContent.top
+                anchors.bottomMargin: 6
+                anchors.horizontalCenter: mainBarContent.horizontalCenter
+
+                screenX: Math.round((mainBarWindow.width - appPopup.width) / 2)
+                screenY: Math.round(mainBarWindow.height - mainBarContent.height - 48 - appPopup.height)
+
+                show: mainBarContent.appPopupActive
+
+                onCloseRequested: mainBarContent.closeView()
             }
         }
     }

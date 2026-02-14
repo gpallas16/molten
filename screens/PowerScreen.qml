@@ -10,10 +10,10 @@ Item {
 
     signal closeRequested()
 
-    // Adaptive colors based on background
+    // Adaptive colors (shares notch region sampling)
     AdaptiveColors {
         id: adaptiveColors
-        region: "notch"
+        regionId: "notch"
     }
 
     RowLayout {
